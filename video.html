@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>CHILL ZONE — видео 4K</title>
+<style>
+  :root{--bg:#07070c;--card:#12121c;--txt:#f2f2f7;--mut:#9a9ab0;--acc:#7c4dff;--ok:#2ecc71;--err:#ff5470}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--txt);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:16px}
+  .card{width:100%;max-width:460px;background:var(--card);border:1px solid #23233a;border-radius:18px;padding:28px}
+  h1{margin:0 0 6px;font-size:22px}
+  p{margin:0 0 18px;color:var(--mut);font-size:14px}
+  button{width:100%;border:0;border-radius:12px;padding:16px;font-size:17px;font-weight:700;color:#fff;background:linear-gradient(135deg,#7c4dff,#00d2ff);cursor:pointer}
+  button:disabled{opacity:.6;cursor:default}
+  .bar{height:10px;background:#23233a;border-radius:6px;overflow:hidden;margin:18px 0 8px;display:none}
+  .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#7c4dff,#00d2ff);transition:width .2s}
+  #st{font-size:14px;color:var(--mut);min-height:22px}
+  #st.ok{color:var(--ok)} #st.err{color:var(--err)}
+  .info{margin-top:18px;font-size:13px;color:var(--mut);border-top:1px solid #23233a;padding-top:14px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>CHILL ZONE — ролик для кинотеатра</h1>
+  <p>CHILL_ZONE_CINEMA_4K.mp4 · 3840×2160 · 24 fps · 42 сек · 308 МБ</p>
+  <button id="go">⬇ Скачать видео 4K</button>
+  <div class="bar" id="bar"><i id="fill"></i></div>
+  <div id="st"></div>
+  <div class="info">В Telegram отправляйте через «Файл» (скрепка → Файл), а не как видео, иначе Telegram сожмёт качество.</div>
+</div>
+<script>
+const BASE='https://raw.githubusercontent.com/ahmaddak39-code/chillzone/video/';
+const PARTS=['cz4k.part0','cz4k.part1','cz4k.part2','cz4k.part3'];
+const TOTAL=307854267, SHA='5a9421908dd6ad80732ee206f46f010d4aa67a3e706d8363dec466091c1dfc33';
+const btn=document.getElementById('go'),st=document.getElementById('st'),bar=document.getElementById('bar'),fill=document.getElementById('fill');
+let url=null;
+function save(){const a=document.createElement('a');a.href=url;a.download='CHILL_ZONE_CINEMA_4K.mp4';document.body.appendChild(a);a.click();a.remove();}
+btn.onclick=async()=>{
+  if(url){save();return;}
+  btn.disabled=true;bar.style.display='block';st.className='';
+  try{
+    const chunks=[];let got=0;
+    for(const p of PARTS){
+      const r=await fetch(BASE+p,{cache:'no-store'});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      const rd=r.body.getReader();
+      for(;;){const {done,value}=await rd.read();if(done)break;chunks.push(value);got+=value.length;
+        fill.style.width=(got/TOTAL*100).toFixed(1)+'%';st.textContent='Загрузка: '+(got/1e6).toFixed(0)+' из 308 МБ';}
+    }
+    if(got!==TOTAL)throw new Error('размер не совпал');
+    const blob=new Blob(chunks,{type:'video/mp4'});
+    st.textContent='Проверяю файл…';
+    try{const h=await crypto.subtle.digest('SHA-256',await blob.arrayBuffer());
+      const hex=[...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
+      if(hex!==SHA)throw new Error('файл повреждён');}catch(e){if(String(e.message).includes('повреждён'))throw e;}
+    url=URL.createObjectURL(blob);save();
+    st.className='ok';st.textContent='✓ Готово! Файл проверен и сохранён в «Загрузки». Если не сохранился — нажмите кнопку ещё раз.';
+    btn.textContent='⬇ Сохранить ещё раз';btn.disabled=false;
+  }catch(e){st.className='err';st.textContent='Ошибка: '+e.message+'. Проверьте интернет и нажмите ещё раз.';btn.disabled=false;}
+};
+</script>
+</body>
+</html>
