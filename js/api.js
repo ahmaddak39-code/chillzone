@@ -68,7 +68,10 @@
     }
     return data;
   }
-  function mkErr(code) { const e = new Error(ERR[code] || code); e.code = code; return e; }
+  function mkErr(code) {
+    if (/Could not find the function|schema cache/i.test(code)) { const e = new Error('Этот раздел запускается и скоро заработает. Попробуйте чуть позже или позвоните в клуб.'); e.code = 'NOT_READY'; return e; }
+    const e = new Error(ERR[code] || code); e.code = code; return e;
+  }
 
   // ---------- Время (часовой пояс клуба) ----------
   let TZ = TZ_DEFAULT;

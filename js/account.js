@@ -20,14 +20,17 @@
 
   async function load() {
     CZ.footer();
+    try { const d = await rpc('get_public_data'); if (!(d.features && d.features.balance)) return soon(); } catch (e) {}
     if (!token()) return authView();
     try { ME = await call('client_me'); render(); }
     catch (e) {
       if (e.code === 'CLIENT_AUTH_REQUIRED') { setToken(''); return authView(); }
-      if (/function|Could not find|PGRST/i.test(e.message)) return box.innerHTML = '<div class="empty-state"><h3>Скоро</h3><p class="muted">Личный баланс запускается. Загляните чуть позже.</p></div>';
+      if (e.code === 'NOT_READY') return soon();
       box.innerHTML = `<div class="empty-state"><h3>Не удалось загрузить</h3><p class="muted">${esc(e.message)}</p><button class="btn btn-neon" onclick="location.reload()">Обновить</button></div>`;
     }
   }
+
+  function soon() { box.innerHTML = '<div class="empty-state"><h3>Личный кабинет скоро откроется</h3><p class="muted">Мы заканчиваем запуск. А пока бронируйте как обычно — на главной странице.</p><a class="btn btn-neon" href="/#room">Забронировать</a></div>'; }
 
   // ---------- вход / регистрация ----------
   function authView(mode = ret ? 'reg' : 'login') {
