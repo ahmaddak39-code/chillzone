@@ -298,7 +298,7 @@ language sql stable security definer set search_path = public, extensions, pg_te
     'hold_until', b.hold_until, 'created_at', b.created_at, 'server_now', now(),
     'has_receipt', exists(select 1 from receipts r where r.booking_id = b.id),
     'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'refunded', b.refunded,
-    'refund_preview', case when b.payment_status = 'balance' and b.status = 'confirmed' and b.starts_at > now() then _refund_amount(b) end)
+    'refund_preview', null::int)
 $$;
 
 -- =====================================================================
@@ -498,7 +498,7 @@ declare r int := 0;
 begin
   select * into b from bookings where id = b.id for update;   -- блокировка: повторная отмена не пройдёт
   if b.status = 'awaiting_payment' then null;
-  elsif b.payment_status = 'balance' and b.status = 'confirmed' and b.starts_at > now() then r := _refund_amount(b);
+  -- оплаченную и подтверждённую бронь клиент отменить не может (без возврата) — только администратор
   else raise exception 'BAD_STATUS'; end if;
   update bookings set status = 'cancelled', hold_until = null, updated_at = now() where id = b.id returning * into b;
   update booking_slots set active = false where booking_id = b.id;
@@ -1086,7 +1086,7 @@ language sql stable security definer set search_path = public, extensions, pg_te
             from (select * from topups where account_id = a.id order by created_at desc limit 50) t),
     'bookings', (select coalesce(jsonb_agg(jsonb_build_object('code', b.code, 'equipment_name', b.equipment_name, 'starts_at', b.starts_at, 'ends_at', b.ends_at,
               'total', b.total, 'status', b.status, 'status_ru', _status_ru(b.status), 'payment_status', b.payment_status, 'refunded', b.refunded,
-              'refund_preview', case when b.payment_status = 'balance' and b.status = 'confirmed' and b.starts_at > now() then _refund_amount(b) end) order by b.starts_at desc), '[]'::jsonb)
+              'refund_preview', null::int) order by b.starts_at desc), '[]'::jsonb)
             from (select * from bookings where account_id = a.id order by starts_at desc limit 50) b),
     'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'balance_settings', _setting('balance'))
 $$;

@@ -217,7 +217,7 @@
     const tot = S.quote ? S.quote.total : 0;
     n.innerHTML = tot && CLIENT.balance < tot
       ? `<div class="note">На балансе ${rub(CLIENT.balance)} — не хватает ${rub(tot - CLIENT.balance)}. <a href="/account"><b>Пополнить баланс</b></a> или выберите оплату переводом.</div>`
-      : `<div class="note info">Спишем ${tot ? rub(tot) : 'стоимость'} с баланса — бронь подтвердится сразу. Останется ${rub(CLIENT.balance - tot)}.</div>`;
+      : `<div class="note info">Спишем ${tot ? rub(tot) : 'стоимость'} с баланса — бронь подтвердится сразу. Останется ${rub(CLIENT.balance - tot)}. После оплаты бронь отменить нельзя, деньги не возвращаются.</div>`;
   }
   function maskPhone(v) {
     let d = v.replace(/\D/g, ''); if (d.startsWith('8')) d = '7' + d.slice(1); if (d && !d.startsWith('7')) d = '7' + d; d = d.slice(0, 11);

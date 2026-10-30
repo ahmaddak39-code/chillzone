@@ -94,9 +94,9 @@
         ${(ME.bookings || []).length ? ME.bookings.map(b => `<div class="op"><div><b>${esc(b.equipment_name)}</b> <span class="dim" style="font-size:12px">${esc(b.code)}</span>
           <div class="dim" style="font-size:13px">${CZ.fmtRange(b.starts_at, b.ends_at)} · ${rub(b.total)} · ${b.payment_status === 'balance' ? 'оплачено с баланса' : 'перевод'}</div>
           <div style="font-size:13px">${esc(b.status_ru)}${b.refunded ? ` · возвращено ${rub(b.refunded)}` : ''}</div></div>
-          <div>${b.refund_preview != null ? `<button class="btn btn-sm btn-ghost" data-cancel="${esc(b.code)}" data-refund="${b.refund_preview}">Отменить</button>` : ''}</div></div>`).join('')
+          </div></div>`).join('')
         : '<p class="muted">Броней, оформленных из аккаунта, пока нет.</p>'}
-        <p class="dim" style="font-size:12px;margin-top:10px">Возврат при отмене брони, оплаченной с баланса: полный — если до начала больше ${s.refund_full_hours ?? 2} ч${+s.refund_late_percent ? `, позже — ${s.refund_late_percent}%` : ', позже — без возврата'}. Деньги возвращаются на баланс.</p>
+        <p class="dim" style="font-size:12px;margin-top:10px">Оплаченная и подтверждённая бронь не отменяется, деньги за неё не возвращаются. Вопросы — <a href="tel:+79285535252">+7 928 553-52-52</a>.</p>
       </section>`;
     $('#out').onclick = async () => { try { await call('client_logout'); } catch (e) {} setToken(''); authView(); };
     bindTopup(); bindPending();
