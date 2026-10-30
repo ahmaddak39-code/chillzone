@@ -15,7 +15,7 @@
         sh += '<i class="sh ' + s[0] + '" style="--dx:' + dx + ';--dy:' + dy + '">' + ch + '</i>';
       });
       return '<span class="L" style="--i:' + i + '">' + ch +
-        '<i class="ext">' + ch + '</i>' + sh + '<i class="rgb rc">' + ch + '</i><i class="rgb rp">' + ch + '</i><i class="rim">' + ch + '</i></span>';
+        '<i class="ext">' + ch + '</i>' + sh + '<i class="ab ac">' + ch + '</i><i class="ab ap">' + ch + '</i><i class="rim">' + ch + '</i></span>';
     }).join('');
   }
   var el = document.createElement('div'); el.id = 'intro'; el.setAttribute('aria-hidden', 'true');
