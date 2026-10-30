@@ -383,7 +383,7 @@
     const name = $('#nm').value.trim(), phone = $('#ph').value;
     try {
       const b = await rpc('create_booking', { equipment_id: it.id, starts_at: S.start, paid_minutes: S.dur, people: S.people, is_student: S.student,
-        name, phone, age_confirmed: !!($('#age') && $('#age').checked), ...(S.npk ? { night_package: true, date: S.date } : {}),
+        name, phone, age_confirmed: S.npk ? !!($('#age') && $('#age').checked) : true, ...(S.npk ? { night_package: true, date: S.date } : {}),   // почасовые брони — без ограничений 18+
         ...(ctoken() ? { ctoken: ctoken() } : {}), pay_method: S.pay === 'balance' && $('#payCh') ? 'balance' : 'transfer' });
       try { localStorage.setItem('cz_name', name); localStorage.setItem('cz_phone', phone); } catch (e) {}
       CZ.saveMyBooking(b);
