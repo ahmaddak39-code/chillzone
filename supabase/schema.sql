@@ -237,7 +237,8 @@ insert into settings(key, value) values
  ('payment', '{"bank": "Т-Банк (бывший Тинькофф)", "phone": "8 928 060-55-50", "whatsapp": "79280605550"}'),
  ('contacts', '{"address": "г. Хасавюрт, ул. Тотурбиева, 137", "phone": "+7 928 553-52-52", "instagram": "chill.zone.game"}'),
  ('admin_idle_minutes', '30'),
- ('telegram', '{"enabled": false, "bot_token": "", "chat_id": ""}')
+ ('telegram', '{"enabled": false, "bot_token": "", "chat_id": ""}'),
+ ('notify', '{"whatsapp": "79285535252", "label": "+7 928 553-52-52"}')
 on conflict (key) do nothing;
 
 insert into equipment(id,name,kind,description,features,price_per_hour,max_players,bookable,photo_url,map_x,map_y,map_rot,sort,link_to) values

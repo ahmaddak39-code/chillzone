@@ -44,6 +44,17 @@ create or replace function _status_ru(s text) returns text language sql immutabl
     when 'expired' then 'Время истекло'
     else s end $$;
 
+
+-- Краткая сводка заявки для уведомлений: имя, оборудование, дата, время, сумма, статус
+create or replace function _bk_line(b bookings) returns text
+language sql stable security definer set search_path = public, extensions, pg_temp as $$
+  select format(E'№ %s\nКлиент: %s, +%s\nОборудование: %s%s\nДата: %s\nВремя: %s–%s\nСумма: %s ₽%s\nСтатус: %s',
+    b.code, b.customer_name, b.phone, b.equipment_name,
+    case when b.equipment_id = 'room' then format(' (%s чел.)', b.people) else '' end,
+    to_char(_local(b.starts_at), 'DD.MM.YYYY'), to_char(_local(b.starts_at), 'HH24:MI'), to_char(_local(b.ends_at), 'HH24:MI'),
+    b.total, case when b.due_now <> b.total then format(' (предоплата %s ₽)', b.due_now) else '' end,
+    _status_ru(b.status)) $$;
+
 -- Уведомление: всегда в админ-панели; в Telegram — только если интеграция включена и pg_net подключён.
 create or replace function _notify(ev text, bid uuid, msg text) returns void
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
@@ -262,7 +273,7 @@ language sql stable security definer set search_path = public, extensions, pg_te
     'status', b.status, 'status_ru', _status_ru(b.status), 'payment_status', b.payment_status,
     'hold_until', b.hold_until, 'created_at', b.created_at, 'server_now', now(),
     'has_receipt', exists(select 1 from receipts r where r.booking_id = b.id),
-    'payment', _setting('payment'))
+    'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'))
 $$;
 
 -- =====================================================================
@@ -289,7 +300,7 @@ begin
         'custom_duration', _setting('custom_duration'), 'booking_horizon_days', _setting('booking_horizon_days'),
         'work_hours', _setting('work_hours'), 'room', _setting('room'),
         'student_discount_percent', _setting('student_discount_percent'), 'night', _setting('night'),
-        'payment', _setting('payment'), 'contacts', _setting('contacts')),
+        'payment', _setting('payment') - 'whatsapp', 'contacts', _setting('contacts'), 'notify', _setting('notify')),
     'promotions', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'title', title, 'description', description,
         'type', type, 'config', config, 'starts_on', starts_on, 'ends_on', ends_on) order by sort, created_at), '[]'::jsonb)
         from promotions where is_active and (ends_on is null or ends_on >= _local(now())::date)),
@@ -378,8 +389,10 @@ begin
   returning * into b;
   perform _occupy(b.id, null, e.id, b.starts_at, b.ends_at);
   perform _audit('client', b.id, 'created', jsonb_build_object('total', b.total));
-  perform _notify('new_booking', b.id, format('Новая заявка %s: %s, %s, %s ₽, %s', b.code, b.equipment_name,
-    to_char(_local(b.starts_at), 'DD.MM HH24:MI'), b.total, b.customer_name));
+  perform _notify(case when b.equipment_id = 'room' then 'new_room_booking' else 'new_booking' end, b.id,
+    case when b.equipment_id = 'room' then E'🌐 Новая заявка на аренду ВСЕЙ КОМНАТЫ
+' else E'🆕 Новая заявка на бронирование
+' end || _bk_line(b));
   return _booking_public(b) || jsonb_build_object('token', tok);
 end $$;
 
@@ -415,7 +428,7 @@ begin
   update bookings set status = 'receipt_sent', payment_status = 'claimed', hold_until = null, updated_at = now()
     where id = b.id returning * into b;
   perform _audit('client', b.id, 'receipt_uploaded', '{}');
-  perform _notify('receipt_sent', b.id, format('Чек загружен по заявке %s (%s ₽). Проверьте поступление денег.', b.code, b.due_now));
+  perform _notify('receipt_sent', b.id, E'📎 Клиент загрузил чек об оплате — заявка ожидает проверки\n' || _bk_line(b) || E'\nПроверьте поступление денег в банке.');
   return _booking_public(b);
 end $$;
 
@@ -430,7 +443,7 @@ begin
     update bookings set status = 'pending_review', payment_status = 'claimed', hold_until = null, updated_at = now()
       where id = b.id returning * into b;
     perform _audit('client', b.id, 'client_reported_payment', '{"channel":"whatsapp"}');
-    perform _notify('receipt_sent', b.id, format('Клиент сообщил об оплате по заявке %s (%s ₽), чек — в WhatsApp.', b.code, b.due_now));
+    perform _notify('pending_review', b.id, E'💳 Клиент оплатил и отправил чек в WhatsApp — бронь ожидает подтверждения\n' || _bk_line(b) || E'\nПроверьте поступление денег в банке.');
   elsif b.status not in ('receipt_sent','pending_review','payment_verified','confirmed') then
     raise exception 'BAD_STATUS';
   end if;
@@ -446,7 +459,7 @@ begin
   update bookings set status = 'cancelled', hold_until = null, updated_at = now() where id = b.id returning * into b;
   update booking_slots set active = false where booking_id = b.id;
   perform _audit('client', b.id, 'cancelled', '{}');
-  perform _notify('cancelled', b.id, format('Клиент отменил заявку %s.', b.code));
+  perform _notify('cancelled', b.id, E'❌ Клиент отменил бронирование\n' || _bk_line(b));
   return _booking_public(b);
 end $$;
 
@@ -600,7 +613,9 @@ begin
     update bookings set payment_status = case when act = 'mark_onsite' then 'onsite' else 'verified' end,
       status = case when status = 'confirmed' then 'confirmed' else 'payment_verified' end, hold_until = null, updated_at = now()
       where id = b.id returning * into b;
-    perform _notify('payment_verified', b.id, format('Оплата по заявке %s отмечена как %s.', b.code, case when act='mark_onsite' then 'оплата на месте' else 'проверенная' end));
+    perform _notify('payment_verified', b.id, case when act='mark_onsite' then E'🏪 Оплата на месте отмечена — бронь ожидает подтверждения
+' else E'💳 Оплата проверена — бронь ожидает подтверждения
+' end || _bk_line(b));
   elsif act = 'confirm' then
     if b.status in ('rejected','cancelled','expired') then raise exception 'BAD_STATUS'; end if;
     if b.payment_status not in ('verified','onsite') then
@@ -613,7 +628,7 @@ begin
     update bookings set status = 'confirmed', payment_status = b.payment_status, hold_until = null, confirmed_at = now(), updated_at = now()
       where id = b.id returning * into b;
     update booking_slots set active = true where booking_id = b.id;
-    perform _notify('confirmed', b.id, format('Бронирование %s подтверждено.', b.code));
+    perform _notify('confirmed', b.id, E'✅ Бронь подтверждена\n' || _bk_line(b));
   elsif act = 'reject' or act = 'cancel' then
     if b.status in ('rejected','cancelled') then raise exception 'BAD_STATUS'; end if;
     update bookings set status = case when act = 'reject' then 'rejected' else 'cancelled' end, hold_until = null, updated_at = now()
@@ -853,7 +868,7 @@ language plpgsql volatile security definer set search_path = public, extensions,
 declare k text := p->>'key'; v jsonb := p->'value';
 begin
   perform _admin(p);
-  if k not in ('timezone','hold_minutes','durations','custom_duration','booking_horizon_days','work_hours','room','student_discount_percent','night','payment','contacts','admin_idle_minutes','telegram') then
+  if k not in ('timezone','hold_minutes','durations','custom_duration','booking_horizon_days','work_hours','room','student_discount_percent','night','payment','contacts','admin_idle_minutes','telegram','notify') then
     raise exception 'BAD_KEY';
   end if;
   if k = 'telegram' and coalesce(v->>'bot_token','') = '' then

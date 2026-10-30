@@ -45,9 +45,17 @@
     catch (e) { if (!silent) $('#app').innerHTML = `<div class="card" style="padding:28px"><h2>Заявка не найдена</h2><p class="muted">Проверьте ссылку. Ссылка на заявку работает только на устройстве, где она была создана, или по полной ссылке.</p><a class="btn btn-neon" href="/#room">На главную</a></div>`; }
   }
   function stepIdx(s) { return s === 'pending_review' ? 1 : Math.max(0, STEPS.indexOf(s)); }
-  function waText() {
-    return `Здравствуйте! Я оплатил бронирование CHILL ZONE.\n\nНомер бронирования: ${B.code}.\n\nОборудование: ${B.equipment_name}.\n\nДата: ${CZ.fmtDate(B.starts_at)}.\n\nВремя: ${CZ.localTime(B.starts_at)}–${CZ.localTime(B.ends_at)}.\n\nСумма: ${rub(B.due_now)}.\n\nОтправляю чек об оплате`;
+  // Рабочий номер клуба для уведомлений (меняется в админ-панели). Номер для перевода денег — отдельно, в реквизитах.
+  const CLUB_WA = () => String(((B && B.notify) || {}).whatsapp || '79285535252').replace(/\D/g, '');
+  function details() {
+    return `Имя: ${B.customer_name}\nОборудование: ${B.equipment_name}${B.equipment_id === 'room' ? ` (${B.people} чел.)` : ''}\nДата: ${CZ.fmtDate(B.starts_at)}\nВремя: ${CZ.localTime(B.starts_at)}–${CZ.localTime(B.ends_at)}\nСумма: ${rub(B.total)}${B.due_now !== B.total ? ` (предоплата ${rub(B.due_now)})` : ''}\nСтатус: ${B.status_ru}`;
   }
+  function waText() {
+    return `Здравствуйте! Я оплатил бронирование CHILL ZONE.\n\nНомер бронирования: ${B.code}\n${details()}\n\nОтправляю чек об оплате`;
+  }
+  function waNew() { return `Здравствуйте! ${B.equipment_id === 'room' ? 'Я оформил заявку на аренду всей игровой комнаты' : 'Я оформил заявку на бронирование'} CHILL ZONE.\n\nНомер бронирования: ${B.code}\n${details()}`; }
+  function waCancel() { return `Здравствуйте! Я отменил бронирование CHILL ZONE.\n\nНомер бронирования: ${B.code}\n${details()}`; }
+  const waLink = t => `https://wa.me/${CLUB_WA()}?text=${encodeURIComponent(t)}`;
   function render() {
     const s = B.status, pay = B.payment || {};
     const cls = s === 'confirmed' ? 'good' : ['rejected', 'cancelled', 'expired'].includes(s) ? 'bad' : s === 'awaiting_payment' ? '' : 'wait';
@@ -91,13 +99,14 @@
         <label class="drop" id="drop"><input type="file" id="file" accept="image/*,application/pdf"><b>📎 Загрузить чек на сайт</b><br><span class="muted" style="font-size:14px">Фото или скриншот перевода, PDF</span>${preview ? `<img class="receipt-prev" src="${preview}" alt="Чек">` : ''}</label>
         ${B.has_receipt ? '<div class="note info">✅ Чек загружен на сайт и передан администратору.</div>' : ''}
         <div style="text-align:center" class="dim">или</div>
-        <a class="btn btn-wa btn-wide" id="wa" href="https://wa.me/${esc(pay.whatsapp || '79280605550')}?text=${encodeURIComponent(waText())}" target="_blank" rel="noopener">Отправить чек в WhatsApp</a>
+        <a class="btn btn-wa btn-wide" id="wa" href="${waLink(waText())}" target="_blank" rel="noopener">Отправить чек в WhatsApp</a>
         ${s === 'awaiting_payment' ? `<p class="dim" style="font-size:13px;margin:0">WhatsApp откроется с готовым текстом — прикрепите фото чека и нажмите «Отправить». После этого нажмите кнопку ниже.</p>
         <button class="btn btn-wide" id="sentWa">Я отправил чек в WhatsApp</button>` : ''}
       </div>
       <div class="note info" style="margin-top:20px">Бронирование становится окончательным только после того, как администратор проверит поступление денег.</div>`;
     }
-    if (s === 'awaiting_payment') html += `<p style="margin-top:20px"><button class="btn btn-ghost btn-sm" id="cancel">Отменить заявку</button></p>`;
+    if (s === 'awaiting_payment') html += `<p style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-sm" href="${waLink(waNew())}" target="_blank" rel="noopener">💬 Написать клубу о заявке</a><button class="btn btn-ghost btn-sm" id="cancel">Отменить заявку</button></p>`;
+    if (s === 'cancelled') html += `<p style="margin-top:14px"><a class="btn btn-sm btn-wa" href="${waLink(waCancel())}" target="_blank" rel="noopener">Сообщить клубу об отмене в WhatsApp</a></p>`;
     if (dead) html += `<a class="btn btn-neon" href="/#room" style="margin-top:10px">Оформить новую бронь</a>`;
     html += `<p class="dim" style="margin-top:30px;font-size:13px">Сохраните эту страницу — здесь всегда актуальный статус. Вопросы: <a href="tel:+79285535252">+7 928 553-52-52</a></p>`;
     $('#app').innerHTML = html;

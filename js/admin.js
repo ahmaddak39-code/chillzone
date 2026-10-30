@@ -661,15 +661,17 @@
       <div class="box"><h2>💳 Реквизиты для оплаты</h2><div class="fgrid">
         <div class="fld"><label>Банк</label><input class="inp" id="pB" value="${esc(pay.bank || '')}"></div>
         <div class="fld"><label>Телефон для перевода</label><input class="inp" id="pP" value="${esc(pay.phone || '')}"></div>
-        <div class="fld"><label>WhatsApp для чеков (только цифры)</label><input class="inp" id="pW" value="${esc(pay.whatsapp || '')}"></div>
-      </div><button class="btn btn-neon" id="svPay">Сохранить</button></div>
+      </div><p class="dim" style="font-size:12px">Этот номер клиенты видят только как номер для перевода денег. Уведомления на него не отправляются.</p><button class="btn btn-neon" id="svPay">Сохранить</button></div>
       <div class="box"><h2>📍 Контакты на сайте</h2><div class="fgrid">
         <div class="fld full"><label>Адрес</label><input class="inp" id="cA" value="${esc(ct.address || '')}"></div>
         <div class="fld"><label>Основной телефон</label><input class="inp" id="cP" value="${esc(ct.phone || '')}"></div>
         <div class="fld"><label>Instagram (без @)</label><input class="inp" id="cI" value="${esc(ct.instagram || '')}"></div>
       </div><button class="btn btn-neon" id="svC">Сохранить</button></div>
       <div class="box"><h2>🔔 Уведомления</h2>
-        <p class="muted" style="font-size:14px">Все события (новая заявка, чек, подтверждение, отклонение, отмена, перенос) приходят в эту панель — счётчик на вкладке «Брони». Дополнительно можно получать их в Telegram через официального бота. Клиент видит актуальный статус на странице своей заявки, а написать ему можно кнопкой «WhatsApp клиенту».</p>
+        <div class="fgrid"><div class="fld full"><label>Рабочий номер для уведомлений (WhatsApp)</label><input class="inp" id="nW" inputmode="tel" value="${esc((s.notify || {}).label || '+7 928 553-52-52')}"></div></div>
+        <p class="dim" style="font-size:12px;margin:6px 0 10px">На этот номер клиенты отправляют чеки и сообщения о заявке, об аренде всей комнаты и об отмене — кнопки на странице заявки открывают WhatsApp с готовым текстом: имя, оборудование, дата, время, сумма и статус.</p>
+        <button class="btn btn-neon" id="svN">Сохранить номер</button>
+        <p class="muted" style="font-size:14px;margin-top:16px">Все события — новая заявка, аренда всей комнаты, чек, «ожидает проверки», оплата проверена, бронь подтверждена, отмена, перенос — сразу появляются в этой панели (счётчик на вкладке «Брони») с полными данными заявки. Автоматически, без участия клиента, их можно получать в Telegram через официального бота.</p>
         <div class="fgrid"><label class="tgl full"><input type="checkbox" id="tgE" ${tg.enabled ? 'checked' : ''}> Отправлять в Telegram</label>
         <div class="fld"><label>Токен бота ${tg.has_token ? '(сохранён)' : ''}</label><input class="inp" id="tgT" type="password" placeholder="${tg.has_token ? '•••••• (оставьте пустым)' : '123456:ABC…'}"></div>
         <div class="fld"><label>Chat ID</label><input class="inp" id="tgC" value="${esc(tg.chat_id || '')}"></div></div>
@@ -687,8 +689,10 @@
     const ok = () => toast('Сохранено', 'ok'), bad = e => toast(e.message, 'err');
     $('#svW').onclick = async () => { const days = {}; [1, 2, 3, 4, 5, 6, 7].forEach(d => days[d] = { open: $(`[data-wo="${d}"]`).value || '10:00', close: $(`[data-wc="${d}"]`).value || '02:00', closed: $(`[data-wx="${d}"]`).checked }); try { await saveSetting('work_hours', { always_open: $('#wA').checked, days }); ok(); } catch (e) { bad(e); } };
     $('#svB').onclick = async () => { try { const d = $$('.days-pick input:checked', main()).map(x => +x.value); if (!d.length) throw new Error('Выберите хотя бы одну продолжительность'); await saveSetting('durations', d); await saveSetting('custom_duration', { enabled: $('#cdE').checked, min: +$('#cdMin').value, max: +$('#cdMax').value }); await saveSetting('hold_minutes', +$('#hold').value); await saveSetting('booking_horizon_days', +$('#hor').value); ok(); } catch (e) { bad(e); } };
-    $('#svPay').onclick = async () => { try { await saveSetting('payment', { bank: $('#pB').value, phone: $('#pP').value, whatsapp: $('#pW').value.replace(/\D/g, '') }); ok(); } catch (e) { bad(e); } };
+    $('#svPay').onclick = async () => { try { await saveSetting('payment', Object.assign({}, pay, { bank: $('#pB').value, phone: $('#pP').value })); ok(); } catch (e) { bad(e); } };
     $('#svC').onclick = async () => { try { await saveSetting('contacts', { address: $('#cA').value, phone: $('#cP').value, instagram: $('#cI').value.replace(/^@/, '') }); ok(); } catch (e) { bad(e); } };
+    $('#svN').onclick = async () => { try { let d = $('#nW').value.replace(/\D/g, ''); if (d.length === 11 && d[0] === '8') d = '7' + d.slice(1); if (d.length === 10) d = '7' + d; if (d.length < 11) throw new Error('Введите номер полностью, например +7 928 553-52-52');
+      const label = `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9, 11)}`; await saveSetting('notify', { whatsapp: d, label }); $('#nW').value = label; ok(); } catch (e) { bad(e); } };
     $('#svT').onclick = async () => { try { await saveSetting('telegram', { enabled: $('#tgE').checked, bot_token: $('#tgT').value, chat_id: $('#tgC').value }); ok(); } catch (e) { bad(e); } };
     $('#svPw').onclick = async () => { try { await api('admin_change_password', { old_password: $('#op').value, new_password: $('#np').value }); try { sessionStorage.removeItem('cz_must_change'); } catch (x) {} toast('Пароль изменён. Другие сессии завершены.', 'ok'); settings(); } catch (e) { bad(e); } };
     $('#svIdle').onclick = async () => { try { const v = +$('#idle').value; await saveSetting('admin_idle_minutes', v); IDLE_MIN = v; touch(); ok(); } catch (e) { bad(e); } };
