@@ -106,6 +106,8 @@
     S.id = id; S.start = null; S.quote = null; S.busy = []; S.openedAt = Date.now();
     $('#btnReset').hidden = false; renderQuick(); placeCam();
     const p = $('#panel');
+    if (DATA.features && DATA.features.balance && canBook(it)) await loadClient();
+    if (S.id !== id) return;
     p.innerHTML = panelHTML(it); p.classList.add('open'); p.scrollTop = 0;
     if (isMobile()) { $('#scrim').classList.add('on'); $('#mobCta').classList.add('hide'); scrollTo({ top: $('#roomWrap').getBoundingClientRect().top + scrollY - 70, behavior: 'smooth' }); }
     $('.bk-close', p).onclick = closePanel; $('.bk-back', p).onclick = closePanel;
@@ -167,8 +169,9 @@
       <label class="lbl">Время начала <span class="dim" style="letter-spacing:0;text-transform:none;font-weight:600">· зелёное — свободно</span></label><div class="slots" id="slots"><div class="slots-empty">Загружаю свободное время…</div></div>
       ${people}
       <div id="nightBox"></div>
-      <label class="lbl">Ваши данные</label>
-      <div class="stack"><input class="inp" id="nm" placeholder="Имя" autocomplete="name" maxlength="60" value="${esc(localStorage.getItem('cz_name') || '')}">
+      ${needAcc() ? (CLIENT ? `<label class="lbl">Бронь на</label><div class="note info" style="margin:0">👤 <b>${esc(CLIENT.name)}</b> · ${esc(fmtPh(CLIENT.phone))} <a href="/account" style="margin-left:6px">Личный кабинет →</a></div>` : `<div class="note info">👤 Чтобы забронировать, <b>зарегистрируйтесь в личном кабинете</b> — это займёт минуту. Выбранное оборудование откроется снова.</div>`) : ''}
+      <label class="lbl" ${needAcc() ? 'hidden' : ''}>Ваши данные</label>
+      <div class="stack" ${needAcc() ? 'hidden' : ''}><input class="inp" id="nm" placeholder="Имя" autocomplete="name" maxlength="60" value="${esc(localStorage.getItem('cz_name') || '')}">
       <input class="inp" id="ph" placeholder="+7 (___) ___-__-__" inputmode="tel" autocomplete="tel" value="${esc(localStorage.getItem('cz_phone') || '')}"></div>
       ${stud}
       <div id="sumBox"></div>
@@ -195,11 +198,14 @@
     const pc = $('#payCh', p);
     if (pc) {
       pc.onchange = e => { S.pay = e.target.value; $$('label', pc).forEach(l => l.classList.toggle('on', l.querySelector('input').checked)); payNote(); validate(); };
-      loadClient().then(() => { const bi = $('#balInfo'); if (bi) bi.textContent = CLIENT ? 'на балансе ' + rub(CLIENT.balance) : 'нужен вход в кабинет'; if (CLIENT && !$('#nm').value) $('#nm').value = CLIENT.name; payNote(); validate(); });
+      loadClient().then(() => { const bi = $('#balInfo'); if (bi) bi.textContent = CLIENT ? 'на балансе ' + rub(CLIENT.balance) : 'нужен вход в кабинет'; if (CLIENT) { if (!$('#nm').value || needAcc()) $('#nm').value = CLIENT.name; if (needAcc()) $('#ph').value = fmtPh(CLIENT.phone); } payNote(); validate(); });
     }
     renderBonusNote(it);
   }
-  // ---------- личный баланс ----------
+  // ---------- личный кабинет ----------
+  const needAcc = () => !!(DATA.features && DATA.features.account_required);
+  const fmtPh = p => { const d = String(p || ''); return d.length === 11 ? `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}` : d; };
+  const goAccount = id => { location.href = '/account?ret=' + encodeURIComponent('/#book=' + id); };
   let CLIENT = null, clientLoaded = false;
   const ctoken = () => { try { return localStorage.getItem('cz_ctoken') || ''; } catch (e) { return ''; } };
   async function loadClient(force) {
@@ -331,6 +337,7 @@
     const btn = $('#bkSubmit'); if (!btn) return;
     const nm = ($('#nm') || {}).value || '', ph = (($('#ph') || {}).value || '').replace(/\D/g, '');
     let msg = '';
+    if (needAcc() && !CLIENT) { btn.disabled = false; btn.textContent = 'Зарегистрируйтесь в личном кабинете'; return; }
     if (!S.start) msg = 'Выберите время';
     else if (!S.quote) msg = 'Считаю стоимость…';
     else if (nm.trim().length < 2) msg = 'Введите имя';
@@ -344,6 +351,7 @@
 
   async function submit(it) {
     const btn = $('#bkSubmit'); const err = $('#bkErr'); err.textContent = '';
+    if (needAcc() && !CLIENT) return goAccount(it.id);
     btn.disabled = true; btn.textContent = 'Оформляю…';
     const name = $('#nm').value.trim(), phone = $('#ph').value;
     try {
@@ -357,7 +365,7 @@
       err.textContent = e.message; btn.disabled = false; validate();
       if (e.code === 'SLOT_TAKEN') { S.start = null; loadAvailability(); }
       if (e.code === 'INSUFFICIENT_FUNDS') { err.innerHTML = `${esc(e.message)} <a href="/account"><b>Пополнить баланс →</b></a>`; loadClient(true).then(validate); }
-      if (e.code === 'CLIENT_AUTH_REQUIRED') { CLIENT = null; validate(); }
+      if (e.code === 'CLIENT_AUTH_REQUIRED' || e.code === 'ACCOUNT_REQUIRED') { CLIENT = null; try { localStorage.removeItem('cz_ctoken'); } catch (x) {} if (needAcc()) return goAccount(it.id); validate(); }
     }
   }
 

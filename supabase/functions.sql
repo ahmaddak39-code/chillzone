@@ -327,7 +327,8 @@ begin
         'student_discount_percent', _setting('student_discount_percent'), 'night', _setting('night'),
         'payment', _setting('payment') - 'whatsapp', 'contacts', _setting('contacts'), 'notify', _setting('notify'),
         'balance', _setting('balance')),
-    'features', jsonb_build_object('balance', coalesce((_setting('balance')->>'enabled')::boolean, false)),
+    'features', jsonb_build_object('balance', coalesce((_setting('balance')->>'enabled')::boolean, false),
+                                   'account_required', coalesce((_setting('balance')->>'require_account')::boolean, false)),
     'promotions', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'title', title, 'description', description,
         'type', type, 'config', config, 'starts_on', starts_on, 'ends_on', ends_on) order by sort, created_at), '[]'::jsonb)
         from promotions where is_active and (ends_on is null or ends_on >= _local(now())::date)),
@@ -387,7 +388,9 @@ begin
   perform _expire_holds();
   -- клиент вошёл в аккаунт: бронь привязывается к нему; при оплате с баланса имя и телефон берутся из аккаунта
   if nullif(p->>'ctoken','') is not null then acc := _client(p); has_acc := true; nm := acc.name; ph := acc.phone;
-  elsif pay_bal then raise exception 'CLIENT_AUTH_REQUIRED'; end if;
+  elsif pay_bal then raise exception 'CLIENT_AUTH_REQUIRED';
+  elsif coalesce((_setting('balance')->>'require_account')::boolean, false) then raise exception 'ACCOUNT_REQUIRED';   -- бронь только через личный кабинет
+  end if;
   if pay_bal and acc.frozen then raise exception 'ACCOUNT_FROZEN'; end if;
   select * into e from equipment where id = p->>'equipment_id';
   if not found then raise exception 'EQUIPMENT_NOT_FOUND'; end if;

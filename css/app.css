@@ -453,3 +453,5 @@ select.inp option{background:#0e1435}
 .pay-choice input{position:absolute;opacity:0;pointer-events:none}
 .pay-choice label.on{border-color:var(--violet);background:rgba(139,92,255,.2)}
 .op b{white-space:nowrap}
+.hdr .nav a{white-space:nowrap}
+@media (max-width:1180px){.hdr-bal .hb-t{display:none}.hdr-bal{padding:8px 10px}}

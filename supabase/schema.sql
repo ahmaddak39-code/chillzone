@@ -315,7 +315,7 @@ begin
 end $$;
 
 insert into settings(key, value) values
- ('balance', '{"enabled": true, "presets": [500, 1000, 2000, 3000], "min_topup": 100, "max_topup": 50000, "refund_full_hours": 2, "refund_late_percent": 0}')
+ ('balance', '{"enabled": true, "require_account": true, "presets": [500, 1000, 2000, 3000], "min_topup": 100, "max_topup": 50000, "refund_full_hours": 2, "refund_late_percent": 0}')
 on conflict (key) do nothing;
 
 -- =====================================================================

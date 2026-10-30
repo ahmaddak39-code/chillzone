@@ -4,7 +4,7 @@
   CZ.header('/account');
   const box = $('#acc');
   let ME = null, TOPUP = null, preview = null;
-  const ret = new URLSearchParams(location.search).get('ret');
+  const ret = (r => r && /^\/(?!\/)/.test(r) ? r : '')(new URLSearchParams(location.search).get('ret'));  // только внутренние ссылки
 
   function token() { try { return localStorage.getItem('cz_ctoken') || ''; } catch (e) { return ''; } }
   function setToken(t) { try { t ? localStorage.setItem('cz_ctoken', t) : localStorage.removeItem('cz_ctoken'); } catch (e) {} }
@@ -30,10 +30,10 @@
   }
 
   // ---------- вход / регистрация ----------
-  function authView(mode = 'login') {
+  function authView(mode = ret ? 'reg' : 'login') {
     box.innerHTML = `<div class="acc-auth card">
-      <div class="kicker">Личный кабинет</div><h1 class="h2" style="font-size:clamp(28px,6vw,44px)">Мой <span class="grad-text">баланс</span></h1>
-      <p class="muted">Пополняй баланс и оплачивай брони в один клик.</p>
+      <div class="kicker">CHILL ZONE</div><h1 class="h2" style="font-size:clamp(28px,6vw,44px)">Личный <span class="grad-text">кабинет</span></h1>
+      ${ret ? '<div class="note info" style="margin:6px 0 0">Чтобы забронировать, зарегистрируйтесь или войдите — это займёт минуту. После этого вы сразу вернётесь к брони.</div>' : '<p class="muted">Бронируй, пополняй баланс и оплачивай брони в один клик.</p>'}
       <div class="segs" id="mode" style="margin:18px 0"><button data-m="login" class="${mode === 'login' ? 'on' : ''}">Вход</button><button data-m="reg" class="${mode === 'reg' ? 'on' : ''}">Регистрация</button></div>
       <form id="af" class="stack">
         ${mode === 'reg' ? '<input class="inp" id="aN" placeholder="Имя" autocomplete="name" maxlength="60" required>' : ''}
