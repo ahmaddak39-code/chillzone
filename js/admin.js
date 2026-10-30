@@ -5,8 +5,10 @@
   let TOKEN = null, IDLE_MIN = 30, lastAct = Date.now(), EQ = [], unseen = 0, SETTINGS = null;
   try { const s = JSON.parse(localStorage.getItem('cz_admin') || 'null'); if (s && s.token) { TOKEN = s.token; IDLE_MIN = s.idle || 30; lastAct = s.at || Date.now(); } } catch (e) {}
 
-  const STATUS = { awaiting_payment: 'Ожидает оплаты', receipt_sent: 'Чек отправлен', pending_review: 'Ожидает проверки', payment_verified: 'Оплата проверена', confirmed: 'Подтверждено', rejected: 'Отклонено', cancelled: 'Отменено', expired: 'Время истекло' };
-  const PAY = { unpaid: 'Не оплачено', claimed: 'Клиент сообщил об оплате', verified: 'Оплата проверена', onsite: 'Оплата на месте', balance: 'Оплачено с баланса' };
+  const STATUS = { awaiting_payment: 'Ожидает отправки в WhatsApp', pending_review: 'Ожидает подтверждения', receipt_sent: 'Ожидает проверки оплаты', payment_verified: 'Оплата проверена', confirmed: 'Подтверждено', rejected: 'Отклонено', cancelled: 'Отменено', expired: 'Истекло время оплаты' };
+  const PAY = { unpaid: 'Перевод · не оплачено', claimed: 'Перевод · клиент сообщил об оплате', verified: 'Перевод · оплата проверена', onsite: 'Оплата на месте', balance: 'С баланса · списано', balance_pending: 'С баланса · спишется при подтверждении' };
+  const BTABS = [['new', '🆕 Заявки на бронирование', ['awaiting_payment', 'pending_review']], ['pay', '💳 Ожидают проверки оплаты', ['receipt_sent', 'payment_verified']], ['ok', '✅ Подтверждённые', ['confirmed']], ['bad', '✖ Отклонённые', ['rejected', 'cancelled', 'expired']], ['all', 'Все', null]];
+  let bTab = 'new';
   const KINDS = { pc: 'Компьютер', ps: 'PlayStation', wheel: 'Руль', vr: 'VR', tennis: 'Настольный теннис', airhockey: 'Аэрохоккей', foosball: 'Настольный футбол', tv: 'Телевизор', room: 'Вся комната', other: 'Другое' };
   const NAV = [['/admin', '📊', 'Главная'], ['/admin/bookings', '🧾', 'Брони'], ['/admin/calendar', '🗓️', 'Календарь'], ['/admin/equipment', '🖥️', 'Оборудование'], ['/admin/balance', '💳', 'Баланс'], ['/admin/prices', '💰', 'Тарифы'], ['/admin/promos', '🎁', 'Акции'], ['/admin/settings', '⚙️', 'Настройки']];
 
@@ -95,7 +97,7 @@
   const when = b => CZ.fmtRange(b.starts_at, b.ends_at);
   function bkItem(b) {
     return `<div class="bk-item" data-bk="${b.id}"><div><span class="c">${esc(b.code)}</span> · <span class="w">${esc(b.equipment_name)}</span></div><div class="r">${rub(b.total)}</div>
-      <div class="m">${when(b)} · ${esc(b.customer_name)} · ${esc(fmtPhone(b.phone))}</div>
+      <div class="m">${when(b)} · ${esc(b.customer_name)} · ${esc(fmtPhone(b.phone))}${b.client_id ? ' · ID ' + esc(b.client_id) : ''}</div>
       <div class="m" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${sb(b.status)} <span class="pay ${b.payment_status}">${PAY[b.payment_status]}</span>${b.receipts && b.receipts.length ? '<span class="pay claimed">📎 чек</span>' : ''}</div></div>`;
   }
   function fmtPhone(p) { const d = String(p || ''); return d.length === 11 ? `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}` : '+' + d; }
@@ -107,7 +109,7 @@
     const max = Math.max(1, ...d.chart.map(x => x.revenue));
     const W = 700, H = 170, bw = W / d.chart.length;
     const bars = d.chart.map((x, i) => { const h = Math.round((x.revenue / max) * (H - 30)); return `<g><rect x="${i * bw + 6}" y="${H - 20 - h}" width="${bw - 12}" height="${Math.max(h, 2)}" rx="5" fill="url(#gb)"><title>${CZ.fmtDateStr(x.date)}: ${rub(x.revenue)}, броней: ${x.count}</title></rect><text x="${i * bw + bw / 2}" y="${H - 4}" fill="#9aa6d6" font-size="11" text-anchor="middle">${+x.date.slice(8)}</text>${x.revenue ? `<text x="${i * bw + bw / 2}" y="${H - 26 - h}" fill="#eef2ff" font-size="10" text-anchor="middle">${Math.round(x.revenue / 100) / 10}к</text>` : ''}</g>`; }).join('');
-    main().innerHTML = top('Главная', `<button class="btn btn-sm btn-neon" id="newBk">+ Бронь</button>`) + `
+    main().innerHTML = top('Главная', `<button class="btn btn-sm" id="manTop2">💵 Пополнить баланс</button> <button class="btn btn-sm btn-neon" id="newBk">+ Бронь</button>`) + `
       <div class="kpis">
         <div class="kpi ${d.pending_review ? 'hot' : ''}"><small>На проверке</small><b>${d.pending_review}</b></div>
         ${d.topups_pending != null ? `<a class="kpi ${d.topups_pending ? 'hot' : ''}" href="/admin/balance" data-r><small>Пополнения на проверке</small><b>${d.topups_pending}</b></a>` : ''}
@@ -130,6 +132,7 @@
       </div></div>`;
     bindBk(main(), dashboard);
     $('#newBk').onclick = () => newBookingForm(dashboard);
+    $('#manTop2').onclick = () => manualTopup(null);
     if (location.pathname === '/admin') refreshBadge();
   }
   function refreshBadge() { $$('.nv[href="/admin/bookings"], .tabbar a[href="/admin/bookings"]').forEach(a => { const b = a.querySelector('.bdg'); if (b) b.remove(); if (unseen) a.insertAdjacentHTML('beforeend', a.classList.contains('nv') ? `<span class="bdg">${unseen}</span>` : `<b class="bdg">${unseen}</b>`); }); }
@@ -144,6 +147,7 @@
   async function bookings() {
     await loadEq();
     main().innerHTML = top('Бронирования', `<button class="btn btn-sm btn-neon" id="newBk">+ Бронь</button>`) + `
+      <div class="segs btabs" id="bTabs">${BTABS.map(([k, t]) => `<button data-bt="${k}" class="${bTab === k ? 'on' : ''}">${t}</button>`).join('')}</div>
       <div class="filters">
         <input class="inp" type="date" id="fFrom" value="${FILT.date_from}" title="С даты">
         <input class="inp" type="date" id="fTo" value="${FILT.date_to}" title="По дату">
@@ -153,11 +157,13 @@
       </div><div class="bk-list" id="list"><p class="muted">Загрузка…</p></div>`;
     const load = async () => {
       FILT = { date_from: $('#fFrom').value, date_to: $('#fTo').value, equipment_id: $('#fEq').value, status: $('#fSt').value, q: $('#fQ').value };
-      const l = await api('admin_list_bookings', FILT);
+      const tb = BTABS.find(x => x[0] === bTab);
+      const l = await api('admin_list_bookings', Object.assign({}, FILT, tb && tb[2] && !FILT.status ? { statuses: tb[2] } : {}));
       $('#list').innerHTML = l.length ? `<p class="dim" style="font-size:13px;margin:0 0 4px">Найдено: ${l.length}</p>` + l.map(bkItem).join('') : '<div class="empty">Ничего не найдено</div>';
       bindBk($('#list'), load);
     };
     ['fFrom', 'fTo', 'fEq', 'fSt'].forEach(id => $('#' + id).onchange = load);
+    $('#bTabs').onclick = e => { const b = e.target.closest('[data-bt]'); if (!b) return; bTab = b.dataset.bt; $$('#bTabs button').forEach(x => x.classList.toggle('on', x === b)); $('#fSt').value = ''; load(); };
     let t; $('#fQ').oninput = () => { clearTimeout(t); t = setTimeout(load, 350); };
     $('#newBk').onclick = () => newBookingForm(load);
     load();
@@ -171,10 +177,14 @@
     const paid = ['verified', 'onsite'].includes(b.payment_status);
     const wa = `https://wa.me/${b.phone}?text=${encodeURIComponent(`Здравствуйте, ${b.customer_name}! Это CHILL ZONE. По вашей заявке ${b.code} (${b.equipment_name}, ${when(b)}): `)}`;
     const c = modal(`<h2>${esc(b.code)} · ${esc(b.equipment_name)}</h2>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">${sb(b.status)} <span class="sb ${paid ? 'confirmed' : b.payment_status === 'claimed' ? 'pending_review' : 'awaiting_payment'}">${PAY[b.payment_status]}</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">${sb(b.status)} <span class="sb ${paid || b.payment_status === 'balance' ? 'confirmed' : b.payment_status === 'claimed' ? 'pending_review' : 'awaiting_payment'}">${PAY[b.payment_status] || b.payment_status}</span></div>
+      ${b.payment_status === 'balance_pending' && active ? `<div class="note ${b.account_balance >= b.total ? 'info' : ''}" style="margin-bottom:12px">💳 Оплата с баланса клиента: при подтверждении спишется <b>${rub(b.total)}</b>. На балансе сейчас ${rub(b.account_balance || 0)}${b.account_balance < b.total ? ' — <b>не хватает</b>, попросите клиента пополнить баланс' : ''}.</div>` : ''}
       <dl class="kv">
         <dt>Клиент</dt><dd>${esc(b.customer_name)}</dd>
         <dt>Телефон</dt><dd><a href="tel:+${b.phone}">${fmtPhone(b.phone)}</a></dd>
+        ${b.client_id ? `<dt>ID клиента</dt><dd>${esc(b.client_id)}</dd>` : ''}
+        <dt>Номер заявки</dt><dd>${esc(b.code)}</dd>
+        <dt>Способ оплаты</dt><dd>${['balance', 'balance_pending'].includes(b.payment_status) ? 'С личного баланса' : b.payment_status === 'onsite' ? 'На месте' : 'Перевод на Т-Банк'}</dd>
         <dt>Дата</dt><dd>${CZ.fmtDate(b.starts_at)}</dd>
         <dt>Время</dt><dd>${CZ.localTime(b.starts_at)}–${CZ.localTime(b.ends_at)}</dd>
         <dt>Продолжительность</dt><dd>${CZ.fmtDur(b.paid_minutes)}${b.bonus_minutes ? ' + ' + CZ.fmtDur(b.bonus_minutes) + ' бонус' : ''}</dd>
@@ -190,18 +200,18 @@
       <h3 style="font-size:15px;margin:18px 0 8px">Чеки</h3>
       ${b.receipts.length ? b.receipts.map((r, i) => `<button class="btn btn-sm" data-rec="${r.id}">👁 Посмотреть чек ${i + 1}</button> `).join('') : `<p class="muted" style="font-size:14px">${b.payment_status === 'claimed' ? 'Клиент сообщил, что отправил чек в WhatsApp.' : 'Чек не загружен.'}</p>`}
       <div id="recBox"></div>
-      ${!paid && active ? '<div class="note" style="margin-top:14px">Фото чека — не доказательство оплаты. Перед подтверждением проверьте поступление денег в банковском приложении.</div>' : ''}
+      ${!paid && active && !['balance', 'balance_pending'].includes(b.payment_status) ? '<div class="note" style="margin-top:14px">Фото чека и сообщение в WhatsApp — не доказательство оплаты. Перед подтверждением проверьте поступление денег в банковском приложении.</div>' : ''}
       <div class="acts">
-        ${active && b.status !== 'confirmed' ? '<button class="btn btn-ok" data-a="confirm">✅ Подтвердить</button>' : ''}
-        ${active && !paid ? '<button class="btn" data-a="verify">💳 Оплата проверена</button>' : ''}
-        ${active && !paid ? '<button class="btn" data-a="onsite">🏪 Оплата на месте</button>' : ''}
+        ${active && b.status !== 'confirmed' ? '<button class="btn btn-ok" data-a="confirm">✅ Подтвердить бронирование</button>' : ''}
+        ${active && !paid && !['balance', 'balance_pending'].includes(b.payment_status) ? '<button class="btn" data-a="verify">💳 Оплата проверена</button>' : ''}
+        ${active && !paid && b.payment_status !== 'balance' ? '<button class="btn" data-a="onsite">🏪 Оплата на месте</button>' : ''}
         ${b.status === 'awaiting_payment' ? '<button class="btn" data-a="extend">⏳ Продлить +30 мин</button>' : ''}
         ${active ? '<button class="btn" data-a="move">🔁 Перенести</button>' : ''}
         <button class="btn" data-a="edit">✏️ Изменить</button>
-        ${active && b.status !== 'confirmed' ? '<button class="btn btn-bad" data-a="reject">✖ Отклонить</button>' : ''}
+        ${active && b.status !== 'confirmed' ? '<button class="btn btn-bad" data-a="reject">✖ Отклонить заявку</button>' : ''}
         ${active ? '<button class="btn btn-bad" data-a="cancel">🗑 Отменить</button>' : ''}
+        <a class="btn" href="${wa}" target="_blank" rel="noopener">💬 Связаться с клиентом</a>
         <a class="btn" href="tel:+${b.phone}">📞 Позвонить</a>
-        <a class="btn" href="${wa}" target="_blank" rel="noopener">💬 WhatsApp клиенту</a>
       </div>
       <details><summary class="muted" style="cursor:pointer">История действий (${b.history.length})</summary><div class="hist">${b.history.map(h => `<div>${CZ.fmtDate(h.at)} ${CZ.localTime(h.at)} · <b>${h.actor === 'admin' ? 'Админ' : h.actor === 'client' ? 'Клиент' : 'Система'}</b>: ${esc(ACT[h.action] || h.action)}${h.details && h.details.note ? ' — ' + esc(h.details.note) : ''}</div>`).join('') || 'Пусто'}</div></details>`);
     const done = async (r, msg) => { toast(msg, 'ok'); closeModal(); if (after) after(); };
@@ -228,9 +238,18 @@
       } catch (e) { toast(e.message, 'err'); }
     });
   }
-  const ACT = { created: 'Заявка создана', created_manually: 'Создана вручную', receipt_uploaded: 'Загружен чек', client_reported_payment: 'Клиент сообщил об оплате (WhatsApp)', cancelled: 'Отменено', expired: 'Время удержания истекло', verify_payment: 'Оплата проверена', mark_onsite: 'Оплата на месте', confirm: 'Подтверждено', reject: 'Отклонено', cancel: 'Отменено администратором', extend_hold: 'Удержание продлено', to_review: 'На проверку', updated: 'Изменено / перенесено', receipt_viewed: 'Чек просмотрен' };
+  const ACT = { created: 'Заявка создана', created_manually: 'Создана вручную', receipt_uploaded: 'Загружен чек', client_reported_payment: 'Клиент сообщил об оплате (WhatsApp)', client_sent_whatsapp: 'Клиент сообщил, что отправил заявку в WhatsApp', cancelled: 'Отменено', expired: 'Время удержания истекло', verify_payment: 'Оплата проверена', mark_onsite: 'Оплата на месте', confirm: 'Подтверждено', reject: 'Отклонено', cancel: 'Отменено администратором', extend_hold: 'Удержание продлено', to_review: 'На проверку', updated: 'Изменено / перенесено', receipt_viewed: 'Чек просмотрен' };
 
   function confirmDialog(b, after) {
+    if (b.payment_status === 'balance_pending') {
+      return modal(`<h2>Подтвердить ${esc(b.code)}?</h2><p class="muted">${esc(b.equipment_name)} · ${when(b)} · ${esc(b.customer_name)}${b.client_id ? ' · ID ' + esc(b.client_id) : ''}</p>
+        <div class="note info">С баланса клиента спишется <b>${rub(b.total)}</b> (сейчас ${rub(b.account_balance || 0)} → останется ${rub((b.account_balance || 0) - b.total)}). Списание выполняется один раз.</div>
+        <button class="btn btn-ok btn-wide" id="cOk" style="margin-top:12px">Списать ${rub(b.total)} и подтвердить бронирование</button>`, c => {
+        $('#cOk', c).onclick = async e => { e.target.disabled = true;
+          try { await api('admin_booking_action', { id: b.id, action: 'confirm' }); toast('Бронирование подтверждено, деньги списаны ✅', 'ok'); closeModal(); if (after) after(); }
+          catch (er) { toast(er.message, 'err'); e.target.disabled = false; } };
+      });
+    }
     const paid = ['verified', 'onsite'].includes(b.payment_status);
     modal(`<h2>Подтвердить ${esc(b.code)}?</h2>
       <p class="muted">${esc(b.equipment_name)} · ${when(b)} · ${esc(b.customer_name)}</p>
@@ -641,40 +660,55 @@
 
   // ================= НАСТРОЙКИ =================
   // ================= БАЛАНС КЛИЕНТОВ =================
-  const TST = { awaiting_payment: 'Ждёт перевода', receipt_sent: 'Чек на проверке', approved: 'Зачислено', rejected: 'Отклонено', cancelled: 'Отменено клиентом' };
-  const TSB = { awaiting_payment: 'awaiting_payment', receipt_sent: 'receipt_sent', approved: 'confirmed', rejected: 'rejected', cancelled: 'cancelled' };
+  const TST = { awaiting_payment: 'Ожидает подтверждения', receipt_sent: 'Чек на проверке', approved: 'Зачислено', rejected: 'Отклонено', cancelled: 'Отменено клиентом' };
+  const TSB = { awaiting_payment: 'pending_review', receipt_sent: 'receipt_sent', approved: 'confirmed', rejected: 'rejected', cancelled: 'cancelled' };
   const OPK = { topup: 'Пополнение', payment: 'Оплата брони', refund: 'Возврат', adjust: 'Корректировка' };
+  const MTH = { cash: 'Наличные', transfer: 'Банковский перевод', other: 'Другой способ', balance: 'С баланса' };
   let balTab = 'topups', topFilter = '';
   async function balance() {
-    main().innerHTML = top('Баланс клиентов') + `<div class="segs" id="bTabs" style="margin-bottom:14px;max-width:520px"><button data-t="topups" class="${balTab === 'topups' ? 'on' : ''}">💳 Пополнения баланса</button><button data-t="clients" class="${balTab === 'clients' ? 'on' : ''}">👤 Клиенты</button></div><div id="bBody"><p class="muted">Загрузка…</p></div>`;
+    main().innerHTML = top('Баланс клиентов') + `
+      <button class="btn btn-neon btn-wide big-topup" id="manTop">💵 ПОПОЛНИТЬ БАЛАНС КЛИЕНТА</button>
+      <div class="segs btabs" id="bTabs" style="margin:14px 0">
+        <button data-t="topups" class="${balTab === 'topups' ? 'on' : ''}">📥 Заявки на пополнение</button>
+        <button data-t="clients" class="${balTab === 'clients' ? 'on' : ''}">👤 Клиенты и балансы</button>
+        <button data-t="ops" class="${balTab === 'ops' ? 'on' : ''}">📜 История операций</button></div>
+      <div id="bBody"><p class="muted">Загрузка…</p></div>`;
+    $('#manTop').onclick = () => manualTopup(null);
     $('#bTabs').onclick = e => { const b = e.target.closest('[data-t]'); if (!b) return; balTab = b.dataset.t; balance(); };
-    try { balTab === 'topups' ? await topupsView() : await clientsView(); }
-    catch (e) { $('#bBody').innerHTML = /function|Could not find|PGRST/i.test(e.message) ? '<div class="empty">Раздел станет доступен после обновления базы данных.</div>' : `<div class="empty">${esc(e.message)}</div>`; }
+    try { balTab === 'topups' ? await topupsView() : balTab === 'clients' ? await clientsView() : await opsView(); }
+    catch (e) { $('#bBody').innerHTML = e.code === 'NOT_READY' ? '<div class="empty">Раздел станет доступен после обновления базы данных.</div>' : `<div class="empty">${esc(e.message)}</div>`; }
   }
+  const after = () => { if (location.pathname === '/admin/balance') balance(); };
+
   async function topupsView() {
     const list = await api('admin_topups', { status: topFilter });
-    const pend = list.filter(t => t.status === 'receipt_sent').length;
+    const pend = list.filter(t => ['awaiting_payment', 'receipt_sent'].includes(t.status)).length;
     $('#bBody').innerHTML = `<div class="box"><div class="filters" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-        <select class="inp" id="tF" style="max-width:240px"><option value="">Все заявки</option>${Object.entries(TST).map(([k, v]) => `<option value="${k}" ${topFilter === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-        ${pend ? `<span class="pay claimed" style="align-self:center">🔔 Чеков на проверке: ${pend}</span>` : ''}</div>
+        <select class="inp" id="tF" style="max-width:260px"><option value="">Все заявки</option>${Object.entries(TST).map(([k, v]) => `<option value="${k}" ${topFilter === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+        ${pend ? `<span class="pay claimed" style="align-self:center">🔔 Ждут решения: ${pend}</span>` : ''}</div>
       <div class="bk-list">${list.length ? list.map(t => `<div class="bk-item" data-tp="${t.id}"><div><span class="c">${esc(t.code)}</span> · <span class="w">${esc(t.name)}</span></div><div class="r">+${rub(t.amount)}</div>
-        <div class="m">${CZ.fmtDate(t.created_at)}, ${CZ.localTime(t.created_at)} · ${esc(fmtPhone(t.phone))} · баланс ${rub(t.balance)}${t.frozen ? ' · ⛔ заблокирован' : ''}</div>
-        <div class="m" style="display:flex;gap:8px;flex-wrap:wrap"><span class="sb ${TSB[t.status]}">${TST[t.status]}</span>${t.receipts.length ? '<span class="pay claimed">📎 чек</span>' : '<span class="pay unpaid">чека нет</span>'}</div></div>`).join('') : '<div class="empty">Заявок на пополнение нет</div>'}</div></div>`;
+        <div class="m">${CZ.fmtDate(t.created_at)}, ${CZ.localTime(t.created_at)} · ${esc(fmtPhone(t.phone))} · ID ${esc(t.client_id || '—')} · баланс ${rub(t.balance)}${t.frozen ? ' · ⛔ заблокирован' : ''}</div>
+        <div class="m" style="display:flex;gap:8px;flex-wrap:wrap"><span class="sb ${TSB[t.status]}">${TST[t.status]}</span>${t.created_by === 'admin' ? `<span class="pay verified">в клубе · ${MTH[t.method] || ''}</span>` : t.receipts.length ? '<span class="pay claimed">📎 чек</span>' : '<span class="pay unpaid">через сайт/WhatsApp</span>'}</div></div>`).join('') : '<div class="empty">Заявок на пополнение нет</div>'}</div></div>`;
     $('#tF').onchange = e => { topFilter = e.target.value; topupsView(); };
     $$('[data-tp]').forEach(x => x.onclick = () => openTopup(list.find(t => t.id === x.dataset.tp)));
   }
   function openTopup(t) {
     const open = ['awaiting_payment', 'receipt_sent'].includes(t.status);
     const c = modal(`<h2 style="margin:0 0 4px">Пополнение ${esc(t.code)}</h2><span class="sb ${TSB[t.status]}">${TST[t.status]}</span>
-      <dl class="kv" style="margin:14px 0"><dt>Клиент</dt><dd>${esc(t.name)}</dd><dt>Телефон</dt><dd><a href="tel:+${t.phone}">${esc(fmtPhone(t.phone))}</a></dd>
-        <dt>Сумма</dt><dd><b style="font-size:20px">${rub(t.amount)}</b></dd><dt>Заявка</dt><dd>${CZ.fmtDate(t.created_at)}, ${CZ.localTime(t.created_at)}</dd>
+      <dl class="kv" style="margin:14px 0"><dt>Клиент</dt><dd>${esc(t.name)}</dd><dt>ID клиента</dt><dd>${esc(t.client_id || '—')}</dd><dt>Телефон</dt><dd><a href="tel:+${t.phone}">${esc(fmtPhone(t.phone))}</a></dd>
+        <dt>Сумма</dt><dd><b style="font-size:20px">${rub(t.amount)}</b></dd><dt>Заявка</dt><dd>${CZ.fmtDate(t.created_at)}, ${CZ.localTime(t.created_at)}${t.created_by === 'admin' ? ' · пополнено в клубе' : ''}</dd>
         <dt>Баланс сейчас</dt><dd>${rub(t.balance)}${t.frozen ? ' · ⛔ операции заблокированы' : ''}</dd>
+        ${t.method ? `<dt>Способ оплаты</dt><dd>${MTH[t.method] || t.method}</dd>` : ''}
         ${t.decided_at ? `<dt>Решение</dt><dd>${CZ.fmtDate(t.decided_at)}, ${CZ.localTime(t.decided_at)}${t.admin_note ? ' — ' + esc(t.admin_note) : ''}</dd>` : ''}</dl>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${t.receipts.map((r, i) => `<button class="btn btn-sm" data-rc="${r.id}">🧾 Посмотреть чек${t.receipts.length > 1 ? ' ' + (i + 1) : ''}</button>`).join('') || '<span class="muted">Клиент ещё не загрузил чек</span>'}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${t.receipts.map((r, i) => `<button class="btn btn-sm" data-rc="${r.id}">🧾 Посмотреть чек${t.receipts.length > 1 ? ' ' + (i + 1) : ''}</button>`).join('') || '<span class="muted">Чек на сайт не загружен (мог прийти в WhatsApp)</span>'}
+        <a class="btn btn-sm" target="_blank" rel="noopener" href="https://wa.me/${t.phone}?text=${encodeURIComponent(`Здравствуйте, ${t.name}! Это CHILL ZONE. По вашей заявке на пополнение ${t.code} (${rub(t.amount)}): `)}">💬 Связаться с клиентом</a></div>
       <div id="rcBox" style="margin:10px 0"></div>
-      ${open ? `<div class="box" style="margin-top:12px"><label class="tgl"><input type="checkbox" id="att"> Я проверил в Т-Банке: перевод на ${rub(t.amount)} действительно поступил</label>
-        <input class="inp" id="tNote" placeholder="Комментарий (необязательно, для отклонения — причина)" maxlength="300" style="margin:10px 0">
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-neon" id="tOk" disabled>✅ Подтвердить пополнение</button><button class="btn btn-bad" id="tNo">✖ Отклонить</button></div></div>` : ''}`, c => {
+      ${open ? `<div class="box" style="margin-top:12px">
+        <div class="fld"><label>Как поступили деньги</label><select class="inp" id="tM"><option value="transfer">Банковский перевод</option><option value="cash">Наличные</option><option value="other">Другой способ</option></select></div>
+        <label class="tgl" style="margin-top:10px"><input type="checkbox" id="att"> Я проверил: ${rub(t.amount)} действительно поступили</label>
+        <input class="inp" id="tNote" placeholder="Комментарий (для отклонения — причина)" maxlength="300" style="margin:10px 0">
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-ok" id="tOk" disabled>✅ Подтвердить пополнение</button><button class="btn btn-bad" id="tNo">✖ Отклонить</button></div>
+        <p class="dim" style="font-size:12px;margin:8px 0 0">Сообщение клиента в WhatsApp — не доказательство оплаты. Подтверждайте только после проверки поступления денег.</p></div>` : ''}`, c => {
       $$('[data-rc]', c).forEach(x => x.onclick = async () => {
         try { const r = await api('admin_topup_receipt', { id: x.dataset.rc }); const src = `data:${r.mime};base64,${r.data}`;
           $('#rcBox', c).innerHTML = r.mime === 'application/pdf' ? `<a class="btn btn-sm" download="chek-${t.code}.pdf" href="${src}">Скачать PDF</a>` : `<a href="${src}" target="_blank" download="chek-${t.code}.jpg"><img class="rec-img" src="${src}" alt="Чек"></a>`; } catch (e) { toast(e.message, 'err'); }
@@ -682,44 +716,97 @@
       if (!open) return;
       $('#att', c).onchange = e => $('#tOk', c).disabled = !e.target.checked;
       const act = async (action, btn) => { btn.disabled = true;
-        try { await api('admin_topup_action', { id: t.id, action, attest: $('#att', c).checked, note: $('#tNote', c).value }); toast(action === 'approve' ? `Зачислено ${rub(t.amount)} на баланс ${t.name}` : 'Заявка отклонена', 'ok'); closeModal(); topupsView(); }
+        try { await api('admin_topup_action', { id: t.id, action, attest: $('#att', c).checked, note: $('#tNote', c).value, method: $('#tM', c).value }); toast(action === 'approve' ? `Зачислено ${rub(t.amount)} на баланс ${t.name}` : 'Заявка отклонена', 'ok'); closeModal(); topupsView(); }
         catch (e) { toast(e.message, 'err'); btn.disabled = false; if (e.code === 'ALREADY_PROCESSED') { closeModal(); topupsView(); } } };
       $('#tOk', c).onclick = e => act('approve', e.target);
       $('#tNo', c).onclick = e => { if (confirm('Отклонить пополнение? Деньги на баланс не поступят.')) act('reject', e.target); };
     });
   }
+
+  // ---------- ручное пополнение в клубе ----------
+  function manualTopup(pre) {
+    const rid = 'm-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);   // защита от двойного нажатия
+    let sel = pre;
+    const c = modal(`<h2 style="margin:0 0 6px">💵 Пополнить баланс клиента</h2><p class="muted" style="margin:0 0 12px">Клиент передал деньги в клубе — сумма зачисляется сразу и записывается в историю.</p>
+      <div id="mSel"></div>
+      <div id="mFind" ${pre ? 'hidden' : ''}><input class="inp" id="mQ" placeholder="🔎 Имя, телефон или ID (CZ-000123)" autocomplete="off"><div class="bk-list" id="mRes" style="margin-top:8px"></div></div>
+      <div id="mForm" ${pre ? '' : 'hidden'}>
+        <div class="fgrid" style="margin-top:12px">
+          <div class="fld"><label>Сумма, ₽</label><input class="inp" type="number" inputmode="numeric" id="mA" min="1" placeholder="например 1000"></div>
+          <div class="fld"><label>Способ оплаты</label><select class="inp" id="mM"><option value="cash">Наличные</option><option value="transfer">Банковский перевод</option><option value="other">Другой способ</option></select></div>
+          <div class="fld full"><label>Комментарий</label><input class="inp" id="mC" maxlength="300" placeholder="необязательно"></div></div>
+        <div class="note info" id="mPrev" style="margin-top:10px"></div>
+        <button class="btn btn-ok btn-wide" id="mGo" style="margin-top:10px" disabled>Подтвердить пополнение</button></div>`, c => {
+      const prev = () => {
+        const a = Math.round(+$('#mA', c).value || 0);
+        $('#mPrev', c).innerHTML = sel ? `Клиент: <b>${esc(sel.name)}</b> · ID ${esc(sel.client_id || '—')}<br>Текущий баланс: <b>${rub(sel.balance)}</b><br>Сумма пополнения: <b>${a > 0 ? rub(a) : '—'}</b> · ${MTH[$('#mM', c).value]}<br>Баланс после операции: <b>${rub(sel.balance + (a > 0 ? a : 0))}</b>` : '';
+        $('#mGo', c).disabled = !(sel && a > 0);
+      };
+      const choose = a => { sel = a; $('#mSel', c).innerHTML = `<div class="bk-item" style="cursor:default"><div><span class="w">${esc(a.name)}</span>${a.frozen ? ' <span class="sb rejected">⛔ заблокирован</span>' : ''}</div><div class="r">${rub(a.balance)}</div><div class="m">${esc(fmtPhone(a.phone))} · ID ${esc(a.client_id || '—')} <a href="#" id="mChg">изменить</a></div></div>`;
+        $('#mFind', c).hidden = true; $('#mForm', c).hidden = false; $('#mChg', c).onclick = e => { e.preventDefault(); sel = null; $('#mSel', c).innerHTML = ''; $('#mFind', c).hidden = false; $('#mForm', c).hidden = true; $('#mQ', c).focus(); }; prev(); $('#mA', c).focus(); };
+      if (pre) choose(pre);
+      let tm; const search = async () => { const q = $('#mQ', c).value.trim(); if (!q) { $('#mRes', c).innerHTML = ''; return; }
+        try { const l = await api('admin_accounts', { q }); $('#mRes', c).innerHTML = l.length ? l.slice(0, 20).map(a => `<div class="bk-item" data-pick="${a.id}"><div><span class="w">${esc(a.name)}</span></div><div class="r">${rub(a.balance)}</div><div class="m">${esc(fmtPhone(a.phone))} · ID ${esc(a.client_id || '—')}</div></div>`).join('') : '<div class="empty">Не найдено. Клиент должен сначала зарегистрироваться в личном кабинете на сайте.</div>';
+          $$('[data-pick]', c).forEach(x => x.onclick = () => choose(l.find(a => a.id === x.dataset.pick))); } catch (e) { toast(e.message, 'err'); } };
+      $('#mQ', c).oninput = () => { clearTimeout(tm); tm = setTimeout(search, 300); };
+      $('#mA', c).oninput = prev; $('#mM', c).onchange = prev;
+      $('#mGo', c).onclick = async e => {
+        const a = Math.round(+$('#mA', c).value); if (!sel || !(a > 0)) return;
+        if (!confirm(`Зачислить ${rub(a)} (${MTH[$('#mM', c).value].toLowerCase()}) на баланс ${sel.name}?`)) return;
+        e.target.disabled = true;
+        try { const r = await api('admin_account_topup', { id: sel.id, amount: a, method: $('#mM', c).value, comment: $('#mC', c).value, request_id: rid });
+          toast(`Готово: ${rub(r.balance_before)} → ${rub(r.balance)}`, 'ok'); closeModal(); after(); }
+        catch (er) { toast(er.message, 'err'); if (er.code === 'ALREADY_PROCESSED') { closeModal(); after(); } else e.target.disabled = false; }
+      };
+      if (!pre) $('#mQ', c).focus();
+    });
+  }
+
   let clQ = '';
   async function clientsView() {
-    $('#bBody').innerHTML = `<div class="box"><input class="inp" id="cq" placeholder="🔎 Поиск по имени или телефону" value="${esc(clQ)}" style="margin-bottom:12px"><div id="cl"></div></div>`;
+    $('#bBody').innerHTML = `<div class="box"><input class="inp" id="cq" placeholder="🔎 Поиск: имя, телефон или ID клиента" value="${esc(clQ)}" style="margin-bottom:12px"><div id="cl"></div></div>`;
     const load = async () => {
       const list = await api('admin_accounts', { q: clQ });
       $('#cl').innerHTML = list.length ? `<div class="bk-list">${list.map(a => `<div class="bk-item" data-ac="${a.id}"><div><span class="w">${esc(a.name)}</span>${a.frozen ? ' <span class="sb rejected">⛔ заблокирован</span>' : ''}</div><div class="r">${rub(a.balance)}</div>
-        <div class="m">${esc(fmtPhone(a.phone))} · с ${CZ.fmtDate(a.created_at)}</div></div>`).join('')}</div>` : '<div class="empty">Клиентов не найдено</div>';
+        <div class="m">${esc(fmtPhone(a.phone))} · ID ${esc(a.client_id || '—')}${a.reserved ? ` · в резерве ${rub(a.reserved)}` : ''} · с ${CZ.fmtDate(a.created_at)}</div></div>`).join('')}</div>` : '<div class="empty">Клиентов не найдено</div>';
       $$('[data-ac]').forEach(x => x.onclick = () => openAccount(x.dataset.ac));
     };
     let tm; $('#cq').oninput = e => { clQ = e.target.value; clearTimeout(tm); tm = setTimeout(load, 300); };
     await load();
   }
+  const opRow = (o, withClient) => `<div class="bk-item" style="cursor:default"><div><span class="w">${OPK[o.kind] || o.kind}</span>${withClient ? ` · ${esc(o.name)} <span class="dim">(${esc(o.client_id || '')})</span>` : ''}</div><div class="r" style="color:${o.amount > 0 ? '#3dffb0' : '#ff8fb8'}">${o.amount > 0 ? '+' : '−'}${rub(Math.abs(o.amount))}</div>
+    <div class="m">${CZ.fmtDate(o.at)}, ${CZ.localTime(o.at)} · ${rub(o.balance_before)} → <b>${rub(o.balance_after)}</b>${o.method ? ' · ' + (MTH[o.method] || o.method) : ''} · ${o.actor === 'admin' ? 'админ' + (o.admin ? ' ' + esc(o.admin) : '') : o.actor === 'client' ? 'клиент' : 'система'}${o.booking_code ? ' · бронь ' + esc(o.booking_code) : ''}${o.topup_code ? ' · заявка ' + esc(o.topup_code) : ''}</div>
+    <div class="m">${esc(o.description)}${o.comment && !String(o.description).includes(o.comment) ? ' — «' + esc(o.comment) + '»' : ''}</div></div>`;
+  let opQ = '', opK = '';
+  async function opsView() {
+    $('#bBody').innerHTML = `<div class="box"><div class="filters" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><input class="inp" id="oq" placeholder="🔎 Клиент, телефон, ID, номер брони или заявки" value="${esc(opQ)}" style="flex:1;min-width:220px">
+      <select class="inp" id="ok" style="max-width:200px"><option value="">Все операции</option>${Object.entries(OPK).map(([k, v]) => `<option value="${k}" ${opK === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div><div id="ol"></div></div>`;
+    const load = async () => { const l = await api('admin_balance_ops', { q: opQ, kind: opK }); $('#ol').innerHTML = l.length ? `<p class="dim" style="font-size:13px;margin:0 0 6px">Операций: ${l.length}</p><div class="bk-list">${l.map(o => opRow(o, true)).join('')}</div>` : '<div class="empty">Операций нет</div>'; };
+    let tm; $('#oq').oninput = e => { opQ = e.target.value; clearTimeout(tm); tm = setTimeout(load, 300); };
+    $('#ok').onchange = e => { opK = e.target.value; load(); };
+    await load();
+  }
   async function openAccount(id) {
     const a = await api('admin_account_get', { id });
-    const c = modal(`<h2 style="margin:0 0 4px">${esc(a.name)}</h2><p class="muted" style="margin:0"><a href="tel:+${a.phone}">${esc(fmtPhone(a.phone))}</a> · аккаунт с ${CZ.fmtDate(a.created_at)}</p>
-      <div class="kpis" style="margin:14px 0"><div class="kpi"><small>Баланс</small><b>${rub(a.balance)}</b></div><div class="kpi ${a.frozen ? 'hot' : ''}"><small>Операции</small><b style="font-size:18px">${a.frozen ? '⛔ Заблокированы' : '✅ Разрешены'}</b></div></div>
+    const c = modal(`<h2 style="margin:0 0 4px">${esc(a.name)}</h2><p class="muted" style="margin:0"><a href="tel:+${a.phone}">${esc(fmtPhone(a.phone))}</a> · ID <b>${esc(a.client_id || '—')}</b> · аккаунт с ${CZ.fmtDate(a.created_at)}</p>
+      <div class="kpis" style="margin:14px 0"><div class="kpi"><small>Баланс</small><b>${rub(a.balance)}</b></div><div class="kpi"><small>Доступно</small><b>${rub(a.available ?? a.balance)}</b></div><div class="kpi ${a.frozen ? 'hot' : ''}"><small>Операции</small><b style="font-size:18px">${a.frozen ? '⛔ Заблокированы' : '✅ Разрешены'}</b></div></div>
       ${a.frozen && a.frozen_reason ? `<div class="banner">Причина блокировки: ${esc(a.frozen_reason)}</div>` : ''}
-      <div class="box"><h3 style="margin:0 0 8px">Ручная корректировка</h3><div class="fgrid">
-        <div class="fld"><label>Сумма, ₽ (минус — списание)</label><input class="inp" type="number" id="adA" placeholder="например 500 или -200"></div>
-        <div class="fld"><label>Причина (обязательно)</label><input class="inp" id="adR" maxlength="200" placeholder="например: оплата наличными на месте"></div></div>
-        <button class="btn btn-neon" id="adGo">Провести корректировку</button></div>
+      <button class="btn btn-neon btn-wide" id="acTop">💵 Пополнить баланс этого клиента</button>
+      <div class="box" style="margin-top:12px"><h3 style="margin:0 0 8px">Корректировка / возврат</h3><div class="fgrid">
+        <div class="fld"><label>Сумма, ₽ (минус — списание)</label><input class="inp" type="number" id="adA" placeholder="например 300 или -200"></div>
+        <div class="fld"><label>Причина (обязательно)</label><input class="inp" id="adR" maxlength="200" placeholder="например: возврат за отменённую игру"></div></div>
+        <button class="btn" id="adGo">Провести операцию</button></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
         ${a.frozen ? '<button class="btn" id="fz">🔓 Разблокировать операции</button>' : '<button class="btn btn-bad" id="fz">⛔ Заблокировать операции</button>'}
         <button class="btn" id="pwR">🔑 Новый пароль клиенту</button></div>
       <h3>История операций (${a.ops_full.length})</h3>
-      <div class="bk-list">${a.ops_full.map(o => `<div class="bk-item" style="cursor:default"><div><span class="w">${OPK[o.kind] || o.kind}</span></div><div class="r" style="color:${o.amount > 0 ? '#3dffb0' : '#ff8fb8'}">${o.amount > 0 ? '+' : '−'}${rub(Math.abs(o.amount))}</div>
-        <div class="m">${CZ.fmtDate(o.at)}, ${CZ.localTime(o.at)} · ${esc(o.description)} · ${o.actor === 'admin' ? 'админ' : o.actor === 'client' ? 'клиент' : 'система'} · после: ${rub(o.balance_after)}</div></div>`).join('') || '<div class="empty">Операций нет</div>'}</div>
-      ${a.topups.length ? `<h3>Пополнения</h3><div class="bk-list">${a.topups.map(t => `<div class="bk-item" style="cursor:default"><div><span class="c">${esc(t.code)}</span></div><div class="r">${rub(t.amount)}</div><div class="m">${CZ.fmtDate(t.created_at)} · <span class="sb ${TSB[t.status]}">${TST[t.status]}</span></div></div>`).join('')}</div>` : ''}
-      ${a.bookings.length ? `<h3>Брони из аккаунта</h3><div class="bk-list">${a.bookings.map(b => `<div class="bk-item" style="cursor:default"><div><span class="c">${esc(b.code)}</span> · ${esc(b.equipment_name)}</div><div class="r">${rub(b.total)}</div><div class="m">${when(b)} · ${sb(b.status)} ${b.payment_status === 'balance' ? '<span class="pay balance">с баланса</span>' : ''}${b.refunded ? ` · возврат ${rub(b.refunded)}` : ''}</div></div>`).join('')}</div>` : ''}`, c => {
+      <div class="bk-list">${a.ops_full.map(o => opRow(o, false)).join('') || '<div class="empty">Операций нет</div>'}</div>
+      ${a.topups.length ? `<h3>Заявки на пополнение</h3><div class="bk-list">${a.topups.map(t => `<div class="bk-item" style="cursor:default"><div><span class="c">${esc(t.code)}</span></div><div class="r">${rub(t.amount)}</div><div class="m">${CZ.fmtDate(t.created_at)} · <span class="sb ${TSB[t.status]}">${TST[t.status]}</span>${t.created_by === 'admin' ? ' · в клубе' : ''}</div></div>`).join('')}</div>` : ''}
+      ${a.bookings.length ? `<h3>Брони из аккаунта</h3><div class="bk-list">${a.bookings.map(b => `<div class="bk-item" style="cursor:default"><div><span class="c">${esc(b.code)}</span> · ${esc(b.equipment_name)}</div><div class="r">${rub(b.total)}</div><div class="m">${when(b)} · ${sb(b.status)} <span class="pay ${b.payment_status}">${PAY[b.payment_status] || ''}</span>${b.refunded ? ` · возврат ${rub(b.refunded)}` : ''}</div></div>`).join('')}</div>` : ''}`, c => {
+      $('#acTop', c).onclick = () => manualTopup({ id: a.id, name: a.name, phone: a.phone, balance: a.balance, client_id: a.client_id, frozen: a.frozen });
       $('#adGo', c).onclick = async () => {
         const amt = Math.round(+$('#adA', c).value), why = $('#adR', c).value.trim();
-        if (!amt) return toast('Введите сумму', 'err'); if (why.length < 3) return toast('Укажите причину корректировки', 'err');
+        if (!amt) return toast('Введите сумму', 'err'); if (why.length < 3) return toast('Укажите причину', 'err');
         if (!confirm(`${amt > 0 ? 'Начислить' : 'Списать'} ${rub(Math.abs(amt))}?\nПричина: ${why}`)) return;
         try { const r = await api('admin_account_adjust', { id, amount: amt, reason: why }); toast(`Готово. Баланс: ${rub(r.balance)}`, 'ok'); openAccount(id); } catch (e) { toast(e.message, 'err'); }
       };

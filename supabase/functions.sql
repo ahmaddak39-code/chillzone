@@ -34,16 +34,23 @@ $$ insert into audit_log(actor, booking_id, action, details) values (actor, bid,
 
 create or replace function _status_ru(s text) returns text language sql immutable as $$
   select case s
-    when 'awaiting_payment' then 'Ожидает оплаты'
-    when 'receipt_sent' then 'Чек отправлен'
-    when 'pending_review' then 'Ожидает проверки'
+    when 'awaiting_payment' then 'Ожидает отправки в WhatsApp'
+    when 'receipt_sent' then 'Ожидает проверки оплаты'
+    when 'pending_review' then 'Ожидает подтверждения'
     when 'payment_verified' then 'Оплата проверена'
     when 'confirmed' then 'Подтверждено'
     when 'rejected' then 'Отклонено'
     when 'cancelled' then 'Отменено'
-    when 'expired' then 'Время истекло'
+    when 'expired' then 'Истекло время оплаты'
     else s end $$;
 
+
+create or replace function _reserved(acc uuid) returns int
+language sql stable security definer set search_path = public, extensions, pg_temp as $$
+  select coalesce(sum(total), 0)::int from bookings
+  where account_id = acc and payment_status = 'balance_pending' and status in ('awaiting_payment','pending_review','receipt_sent','payment_verified') $$;
+
+create or replace function _client_id(n bigint) returns text language sql immutable as $$ select 'CZ-' || lpad(n::text, 6, '0') $$;
 
 -- Краткая сводка заявки для уведомлений: имя, оборудование, дата, время, сумма, статус
 create or replace function _bk_line(b bookings) returns text
@@ -319,7 +326,8 @@ language sql stable security definer set search_path = public, extensions, pg_te
     'hold_until', b.hold_until, 'created_at', b.created_at, 'server_now', now(),
     'has_receipt', exists(select 1 from receipts r where r.booking_id = b.id),
     'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'refunded', b.refunded,
-    'refund_preview', null::int)
+    'refund_preview', null::int, 'phone', b.phone,
+    'can_cancel', b.status = 'awaiting_payment' or (b.payment_status = 'balance_pending' and b.status = 'pending_review'))
 $$;
 
 -- =====================================================================
@@ -425,8 +433,9 @@ begin
   q := _quote(e.id, st, pm, ppl, stud);
   if not coalesce((q->>'price_set')::boolean, false) then raise exception 'PRICE_NOT_SET'; end if;
   if (q->>'is_night')::boolean and not coalesce((p->>'age_confirmed')::boolean, false) then raise exception 'AGE_REQUIRED'; end if;
-  if pay_bal and acc.balance < (q->>'total')::int then raise exception 'INSUFFICIENT_FUNDS'; end if;
-  if not pay_bal and (select count(*) from bookings where phone = ph and status = 'awaiting_payment') >= 3 then raise exception 'TOO_MANY_PENDING'; end if;
+  -- доступно = баланс минус суммы заявок с оплатой с баланса, ещё не подтверждённых админом
+  if pay_bal and acc.balance - _reserved(acc.id) < (q->>'total')::int then raise exception 'INSUFFICIENT_FUNDS'; end if;
+  if (select count(*) from bookings where phone = ph and status = 'awaiting_payment') >= 3 then raise exception 'TOO_MANY_PENDING'; end if;
   if (select count(*) from bookings where source = 'site' and created_at > now() - interval '10 minutes') >= 40 then raise exception 'RATE_LIMIT'; end if;
 
   insert into customers(phone, name, bookings_count, last_booking_at) values (ph, nm, 1, now())
@@ -442,21 +451,17 @@ begin
   values (cd, _sha(tok), cid, nm, ph, e.id, e.name, st, pm, (q->>'bonus_minutes')::int, (q->>'ends_at')::timestamptz,
           ppl, stud, (q->>'is_night')::boolean, q, (q->>'total')::int,
           case when pay_bal then (q->>'total')::int else (q->>'due_now')::int end,
-          case when pay_bal then 'confirmed' else 'awaiting_payment' end,
-          case when pay_bal then 'balance' else 'unpaid' end,
-          case when pay_bal then null else now() + make_interval(mins => hold) end, 'site', left(p->>'comment', 300),
-          case when has_acc then acc.id end, case when pay_bal then now() end)
+          'awaiting_payment',                                   -- никогда не подтверждается автоматически
+          case when pay_bal then 'balance_pending' else 'unpaid' end,
+          now() + make_interval(mins => hold), 'site', left(p->>'comment', 300),
+          case when has_acc then acc.id end, null)
   returning * into b;
   perform _occupy(b.id, null, e.id, b.starts_at, b.ends_at);
-  -- списание: в той же транзакции; если денег не хватит — откатится и бронь
-  if pay_bal then
-    perform _balance_move(acc.id, -b.total, 'payment', format('Оплата брони %s: %s, %s', b.code, b.equipment_name, to_char(_local(b.starts_at), 'DD.MM HH24:MI')), 'client', b.id, null);
-  end if;
   perform _audit('client', b.id, 'created', jsonb_build_object('total', b.total, 'pay_method', case when pay_bal then 'balance' else 'transfer' end));
   perform _notify(case when b.equipment_id = 'room' then 'new_room_booking' else 'new_booking' end, b.id,
     case when b.equipment_id = 'room' then E'🌐 Новая заявка на аренду ВСЕЙ КОМНАТЫ
 ' else E'🆕 Новая заявка на бронирование
-' end || _bk_line(b) || case when pay_bal then E'\n💰 Оплачено с личного баланса — бронь подтверждена автоматически' else '' end);
+' end || _bk_line(b) || case when pay_bal then format(E'\n💳 Оплата с личного баланса: %s ₽ спишутся только после вашего подтверждения', b.total) else E'\n💸 Оплата переводом' end);
   return _booking_public(b) || jsonb_build_object('token', tok);
 end $$;
 
@@ -505,11 +510,15 @@ declare b bookings;
 begin
   perform _expire_holds();
   b := _client_booking(p);
-  if b.status = 'awaiting_payment' then
-    update bookings set status = 'pending_review', payment_status = 'claimed', hold_until = null, updated_at = now()
+  if b.status = 'awaiting_payment' and b.payment_status = 'balance_pending' then
+    update bookings set status = 'pending_review', hold_until = null, updated_at = now() where id = b.id returning * into b;
+    perform _audit('client', b.id, 'client_sent_whatsapp', '{"channel":"whatsapp","pay":"balance"}');
+    perform _notify('pending_review', b.id, E'📨 Клиент сообщил, что отправил заявку в WhatsApp (оплата с баланса) — ожидает подтверждения\n' || _bk_line(b));
+  elsif b.status = 'awaiting_payment' then
+    update bookings set status = 'receipt_sent', payment_status = 'claimed', hold_until = null, updated_at = now()
       where id = b.id returning * into b;
     perform _audit('client', b.id, 'client_reported_payment', '{"channel":"whatsapp"}');
-    perform _notify('pending_review', b.id, E'💳 Клиент оплатил и отправил чек в WhatsApp — бронь ожидает подтверждения\n' || _bk_line(b) || E'\nПроверьте поступление денег в банке.');
+    perform _notify('pending_review', b.id, E'💳 Клиент сообщил, что оплатил и отправил заявку/чек в WhatsApp — ожидает проверки оплаты\n' || _bk_line(b) || E'\nПроверьте поступление денег в банке.');
   elsif b.status not in ('receipt_sent','pending_review','payment_verified','confirmed') then
     raise exception 'BAD_STATUS';
   end if;
@@ -521,8 +530,8 @@ language plpgsql volatile security definer set search_path = public, extensions,
 declare r int := 0;
 begin
   select * into b from bookings where id = b.id for update;   -- блокировка: повторная отмена не пройдёт
-  if b.status = 'awaiting_payment' then null;
-  -- оплаченную и подтверждённую бронь клиент отменить не может (без возврата) — только администратор
+  if b.status = 'awaiting_payment' or (b.payment_status = 'balance_pending' and b.status = 'pending_review') then null;
+  -- подтверждённую бронь клиент отменить не может (без возврата) — только администратор
   else raise exception 'BAD_STATUS'; end if;
   update bookings set status = 'cancelled', hold_until = null, updated_at = now() where id = b.id returning * into b;
   update booking_slots set active = false where booking_id = b.id;
@@ -566,6 +575,7 @@ begin
     raise exception 'AUTH_REQUIRED';
   end if;
   update admin_sessions set last_seen = now() where token_hash = s.token_hash;
+  perform set_config('cz.admin_id', s.admin_id::text, true);
   return s.admin_id;
 end $$;
 
@@ -617,6 +627,9 @@ end $$;
 create or replace function _admin_booking_row(b bookings) returns jsonb
 language sql stable security definer set search_path = public, extensions, pg_temp as $$
   select to_jsonb(b) - 'access_token_hash' || jsonb_build_object('status_ru', _status_ru(b.status),
+    'client_id', (select _client_id(a.client_no) from client_accounts a where a.id = b.account_id),
+    'account_balance', (select a.balance from client_accounts a where a.id = b.account_id),
+    'account_available', (select a.balance - _reserved(a.id) from client_accounts a where a.id = b.account_id),
     'receipts', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'mime', r.mime, 'size', r.size_bytes, 'created_at', r.created_at) order by r.created_at), '[]'::jsonb) from receipts r where r.booking_id = b.id))
 $$;
 
@@ -632,11 +645,11 @@ begin
     'today_count', (select count(*) from bookings where starts_at >= d0 and starts_at < d1 and status not in ('rejected','cancelled','expired')),
     'pending_review', (select count(*) from bookings where status in ('receipt_sent','pending_review','payment_verified')),
     'awaiting_payment', (select count(*) from bookings where status = 'awaiting_payment'),
-    'paid_count', (select count(*) from bookings where payment_status in ('verified','onsite') and status not in ('rejected','cancelled')),
+    'paid_count', (select count(*) from bookings where payment_status in ('verified','onsite','balance') and status not in ('rejected','cancelled')),
     'clients', (select count(*) from customers),
-    'revenue_day', (select coalesce(sum(total),0) from bookings where status = 'confirmed' and payment_status in ('verified','onsite') and starts_at >= d0 and starts_at < d1),
-    'revenue_week', (select coalesce(sum(total),0) from bookings where status = 'confirmed' and payment_status in ('verified','onsite') and starts_at >= d0 - interval '6 days' and starts_at < d1),
-    'revenue_month', (select coalesce(sum(total),0) from bookings where status = 'confirmed' and payment_status in ('verified','onsite') and _local(starts_at)::date >= date_trunc('month', today)::date and starts_at < d1 + interval '40 days' and _local(starts_at)::date < (date_trunc('month', today) + interval '1 month')::date),
+    'revenue_day', (select coalesce(sum(total),0) from bookings where status = 'confirmed' and payment_status in ('verified','onsite','balance') and starts_at >= d0 and starts_at < d1),
+    'revenue_week', (select coalesce(sum(total),0) from bookings where status = 'confirmed' and payment_status in ('verified','onsite','balance') and starts_at >= d0 - interval '6 days' and starts_at < d1),
+    'revenue_month', (select coalesce(sum(total),0) from bookings where status = 'confirmed' and payment_status in ('verified','onsite','balance') and _local(starts_at)::date >= date_trunc('month', today)::date and starts_at < d1 + interval '40 days' and _local(starts_at)::date < (date_trunc('month', today) + interval '1 month')::date),
     'equipment_now', (select coalesce(jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name, 'status', e.status,
         'busy', exists(select 1 from booking_slots s where s.active and s.period @> now() and (s.resource = e.id or s.resource = 'room'))) order by e.sort), '[]'::jsonb)
         from equipment e where e.is_active and e.kind not in ('tv')),
@@ -645,7 +658,7 @@ begin
     'review_list', (select coalesce(jsonb_agg(_admin_booking_row(b) order by b.created_at), '[]'::jsonb) from
         (select * from bookings where status in ('awaiting_payment','receipt_sent','pending_review','payment_verified') order by created_at limit 30) b),
     'chart', (select jsonb_agg(jsonb_build_object('date', d::date,
-        'revenue', (select coalesce(sum(total),0) from bookings where status='confirmed' and payment_status in ('verified','onsite') and _local(starts_at)::date = d::date),
+        'revenue', (select coalesce(sum(total),0) from bookings where status='confirmed' and payment_status in ('verified','onsite','balance') and _local(starts_at)::date = d::date),
         'count', (select count(*) from bookings where status not in ('rejected','cancelled','expired') and _local(starts_at)::date = d::date)) order by d)
         from generate_series(today - 13, today, interval '1 day') d),
     'unseen', (select count(*) from notifications where not seen),
@@ -663,6 +676,7 @@ begin
     where (df is null or _local(starts_at)::date >= df) and (dt is null or _local(starts_at)::date <= dt)
       and (nullif(p->>'equipment_id','') is null or equipment_id = p->>'equipment_id')
       and (nullif(p->>'status','') is null or status = p->>'status')
+      and (jsonb_typeof(p->'statuses') is distinct from 'array' or status in (select jsonb_array_elements_text(p->'statuses')))
       and (q is null or code ilike '%'||q||'%' or customer_name ilike '%'||q||'%' or phone like '%'||regexp_replace(q,'\D','','g')||'%')
     order by starts_at desc limit 400) b);
 end $$;
@@ -708,8 +722,15 @@ begin
 ' else E'💳 Оплата проверена — бронь ожидает подтверждения
 ' end || _bk_line(b));
   elsif act = 'confirm' then
-    if b.status in ('rejected','cancelled','expired') then raise exception 'BAD_STATUS'; end if;
-    if b.payment_status not in ('verified','onsite') then
+    if b.status in ('rejected','cancelled','expired','confirmed') then raise exception 'BAD_STATUS'; end if;
+    if b.payment_status = 'balance_pending' then
+      if b.account_id is null then raise exception 'ACCOUNT_NOT_FOUND'; end if;
+      perform set_config('cz.op_method', 'balance', true);
+      -- атомарно: блокировка счёта, проверка остатка, одна запись на бронь (уникальный индекс)
+      perform _balance_move(b.account_id, -b.total, 'payment',
+        format('Оплата брони %s: %s, %s', b.code, b.equipment_name, to_char(_local(b.starts_at), 'DD.MM HH24:MI')), 'admin', b.id, null);
+      b.payment_status := 'balance';
+    elsif b.payment_status not in ('verified','onsite') then
       if coalesce((p->>'attest')::boolean, false) then
         b.payment_status := case when p->>'payment' = 'onsite' then 'onsite' else 'verified' end;
       else
@@ -718,7 +739,10 @@ begin
     end if;
     update bookings set status = 'confirmed', payment_status = b.payment_status, hold_until = null, confirmed_at = now(), updated_at = now()
       where id = b.id returning * into b;
-    update booking_slots set active = true where booking_id = b.id;
+    begin
+      update booking_slots set active = true where booking_id = b.id;
+    exception when exclusion_violation then raise exception 'SLOT_TAKEN';
+    end;
     perform _notify('confirmed', b.id, E'✅ Бронь подтверждена\n' || _bk_line(b));
   elsif act = 'reject' or act = 'cancel' then
     if b.status in ('rejected','cancelled') then raise exception 'BAD_STATUS'; end if;
@@ -1095,8 +1119,10 @@ begin
   nb := a.balance + amt;
   if nb < 0 then raise exception 'INSUFFICIENT_FUNDS'; end if;
   begin
-    insert into balance_ops(account_id, kind, amount, balance_after, booking_id, topup_id, description, actor)
-    values (acc, k, amt, nb, bid, tid, descr, actor);
+    insert into balance_ops(account_id, kind, amount, balance_after, booking_id, topup_id, description, actor, method, comment, admin_id)
+    values (acc, k, amt, nb, bid, tid, descr, actor, nullif(current_setting('cz.op_method', true), ''), nullif(current_setting('cz.op_comment', true), ''),
+            case when actor = 'admin' then nullif(current_setting('cz.admin_id', true), '')::uuid end);
+    perform set_config('cz.op_method', '', true); perform set_config('cz.op_comment', '', true);
   exception when unique_violation then
     raise exception 'ALREADY_PROCESSED';
   end;
@@ -1107,14 +1133,16 @@ end $$;
 create or replace function _client_public(a client_accounts) returns jsonb
 language sql stable security definer set search_path = public, extensions, pg_temp as $$
   select jsonb_build_object('name', a.name, 'phone', a.phone, 'balance', a.balance, 'frozen', a.frozen, 'frozen_reason', a.frozen_reason,
-    'ops', (select coalesce(jsonb_agg(jsonb_build_object('at', o.created_at, 'kind', o.kind, 'amount', o.amount, 'balance_after', o.balance_after, 'description', o.description,
+    'client_id', _client_id(a.client_no), 'reserved', _reserved(a.id), 'available', a.balance - _reserved(a.id),
+    'ops', (select coalesce(jsonb_agg(jsonb_build_object('at', o.created_at, 'kind', o.kind, 'amount', o.amount, 'balance_after', o.balance_after, 'description', o.description, 'method', o.method,
               'booking_code', (select code from bookings where id = o.booking_id)) order by o.id desc), '[]'::jsonb)
             from (select * from balance_ops where account_id = a.id order by id desc limit 200) o),
-    'topups', (select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'code', t.code, 'amount', t.amount, 'status', t.status, 'created_at', t.created_at, 'admin_note', t.admin_note,
+    'topups', (select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'code', t.code, 'amount', t.amount, 'status', t.status, 'created_at', t.created_at, 'admin_note', t.admin_note, 'method', t.method, 'created_by', t.created_by,
               'has_receipt', exists(select 1 from topup_receipts r where r.topup_id = t.id)) order by t.created_at desc), '[]'::jsonb)
             from (select * from topups where account_id = a.id order by created_at desc limit 50) t),
     'bookings', (select coalesce(jsonb_agg(jsonb_build_object('code', b.code, 'equipment_name', b.equipment_name, 'starts_at', b.starts_at, 'ends_at', b.ends_at,
               'total', b.total, 'status', b.status, 'status_ru', _status_ru(b.status), 'payment_status', b.payment_status, 'refunded', b.refunded,
+              'can_cancel', b.status = 'awaiting_payment' or (b.payment_status = 'balance_pending' and b.status = 'pending_review'),
               'refund_preview', null::int) order by b.starts_at desc), '[]'::jsonb)
             from (select * from bookings where account_id = a.id order by starts_at desc limit 50) b),
     'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'balance_settings', _setting('balance'))
@@ -1179,8 +1207,8 @@ begin
   loop cd := 'TP-' || _rand_code(6); exit when not exists (select 1 from topups where code = cd); end loop;
   insert into topups(code, account_id, amount) values (cd, a.id, amt) returning * into t;
   perform _audit('client', null, 'topup_created', jsonb_build_object('code', cd, 'amount', amt, 'phone', a.phone));
-  perform _notify('topup_new', null, format(E'💰 Заявка на пополнение баланса %s\nКлиент: %s, +%s\nСумма: %s ₽\nСтатус: ожидает оплаты', cd, a.name, a.phone, amt));
-  return jsonb_build_object('topup', to_jsonb(t), 'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'));
+  perform _notify('topup_new', null, format(E'💰 Заявка на пополнение баланса %s\nКлиент: %s, +%s (ID %s)\nСумма: %s ₽\nСтатус: ожидает подтверждения', cd, a.name, a.phone, _client_id(a.client_no), amt));
+  return jsonb_build_object('topup', to_jsonb(t), 'client_id', _client_id(a.client_no), 'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'));
 end $$;
 
 create or replace function client_topup_receipt(p jsonb) returns jsonb
@@ -1221,6 +1249,7 @@ begin
   perform _admin(p);
   return (select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'code', t.code, 'amount', t.amount, 'status', t.status, 'created_at', t.created_at, 'decided_at', t.decided_at,
       'admin_note', t.admin_note, 'account_id', a.id, 'name', a.name, 'phone', a.phone, 'balance', a.balance, 'frozen', a.frozen,
+      'client_id', _client_id(a.client_no), 'method', t.method, 'created_by', t.created_by,
       'receipts', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'mime', r.mime) order by r.created_at), '[]'::jsonb) from topup_receipts r where r.topup_id = t.id))
     order by (t.status in ('receipt_sent','awaiting_payment')) desc, t.created_at desc), '[]'::jsonb)
     from (select * from topups where (nullif(p->>'status','') is null or status = p->>'status') order by created_at desc limit 300) t join client_accounts a on a.id = t.account_id);
@@ -1247,8 +1276,10 @@ begin
   select * into a from client_accounts where id = t.account_id;
   if act = 'approve' then
     if not coalesce((p->>'attest')::boolean, false) then raise exception 'ATTEST_REQUIRED'; end if;
-    nb := _balance_move(t.account_id, t.amount, 'topup', format('Пополнение %s', t.code), 'admin', null, t.id);
-    update topups set status = 'approved', decided_at = now(), updated_at = now(), admin_note = left(p->>'note', 300) where id = t.id returning * into t;
+    perform set_config('cz.op_method', coalesce(nullif(p->>'method',''), 'transfer'), true);
+    perform set_config('cz.op_comment', coalesce(left(p->>'note', 300), ''), true);
+    nb := _balance_move(t.account_id, t.amount, 'topup', format('Пополнение %s (заявка с сайта)', t.code), 'admin', null, t.id);
+    update topups set status = 'approved', decided_at = now(), updated_at = now(), admin_note = left(p->>'note', 300), method = coalesce(nullif(p->>'method',''), 'transfer') where id = t.id returning * into t;
     perform _audit('admin', null, 'topup_approved', jsonb_build_object('code', t.code, 'amount', t.amount, 'phone', a.phone, 'balance_after', nb));
     insert into notifications(event, message, seen) values ('topup_approved', format(E'✅ Пополнение %s подтверждено: +%s ₽\nКлиент: %s, +%s\nБаланс: %s ₽', t.code, t.amount, a.name, a.phone, nb), true);
   elsif act = 'reject' then
@@ -1264,8 +1295,11 @@ declare q text := nullif(btrim(p->>'q'),'');
 begin
   perform _admin(p);
   return (select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name, 'phone', a.phone, 'balance', a.balance, 'frozen', a.frozen, 'created_at', a.created_at,
-      'last_login_at', a.last_login_at) order by a.created_at desc), '[]'::jsonb)
-    from (select * from client_accounts where q is null or name ilike '%'||q||'%' or phone like '%'||regexp_replace(q,'\D','','g')||'%' order by created_at desc limit 300) a);
+      'last_login_at', a.last_login_at, 'client_id', _client_id(a.client_no), 'reserved', _reserved(a.id)) order by a.created_at desc), '[]'::jsonb)
+    from (select * from client_accounts where q is null or name ilike '%'||q||'%'
+            or (regexp_replace(q,'\D','','g') <> '' and phone like '%'||regexp_replace(q,'\D','','g')||'%')
+            or (q ~* '^\s*(cz-?)?0*\d+\s*$' and client_no = regexp_replace(q,'\D','','g')::bigint)
+          order by created_at desc limit 300) a);
 end $$;
 
 create or replace function admin_account_get(p jsonb) returns jsonb
@@ -1276,7 +1310,9 @@ begin
   select * into a from client_accounts where id = (p->>'id')::uuid;
   if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
   return _client_public(a) || jsonb_build_object('id', a.id, 'created_at', a.created_at, 'last_login_at', a.last_login_at,
-    'ops_full', (select coalesce(jsonb_agg(jsonb_build_object('at', o.created_at, 'kind', o.kind, 'amount', o.amount, 'balance_after', o.balance_after, 'description', o.description, 'actor', o.actor) order by o.id desc), '[]'::jsonb)
+    'ops_full', (select coalesce(jsonb_agg(jsonb_build_object('at', o.created_at, 'kind', o.kind, 'amount', o.amount, 'balance_after', o.balance_after,
+                   'balance_before', o.balance_after - o.amount, 'description', o.description, 'actor', o.actor, 'method', o.method, 'comment', o.comment,
+                   'admin', (select username from admin_users u where u.id = o.admin_id)) order by o.id desc), '[]'::jsonb)
                  from balance_ops o where o.account_id = a.id));
 end $$;
 
@@ -1289,6 +1325,7 @@ begin
   if length(why) < 3 then raise exception 'REASON_REQUIRED'; end if;
   select * into a from client_accounts where id = (p->>'id')::uuid;
   if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
+  perform set_config('cz.op_comment', why, true);
   nb := _balance_move(a.id, amt, 'adjust', 'Корректировка администратора: ' || why, 'admin');
   perform _audit('admin', null, 'balance_adjusted', jsonb_build_object('phone', a.phone, 'amount', amt, 'reason', why, 'balance_after', nb));
   return jsonb_build_object('ok', true, 'balance', nb);
@@ -1319,6 +1356,56 @@ begin
   return '{"ok":true}';
 end $$;
 
+
+-- Ручное пополнение администратором (клиент передал деньги в клубе) — зачисляется сразу, с записью в истории
+create or replace function admin_account_topup(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts; amt int := (p->>'amount')::int; m text := coalesce(nullif(p->>'method',''), 'cash');
+  cmt text := left(btrim(coalesce(p->>'comment','')), 300); rid text := nullif(btrim(coalesce(p->>'request_id','')), ''); t topups; cd text; nb int; before int;
+begin
+  perform _admin(p);
+  if amt is null or amt <= 0 or amt > 100000 then raise exception 'BAD_AMOUNT'; end if;
+  if m not in ('cash','transfer','other') then raise exception 'BAD_INPUT'; end if;
+  if rid is not null and exists (select 1 from topups where request_id = rid) then raise exception 'ALREADY_PROCESSED'; end if;
+  select * into a from client_accounts where id = (p->>'id')::uuid for update;
+  if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
+  before := a.balance;
+  loop cd := 'TP-' || _rand_code(6); exit when not exists (select 1 from topups where code = cd); end loop;
+  begin
+    insert into topups(code, account_id, amount, status, admin_note, decided_at, method, created_by, request_id)
+    values (cd, a.id, amt, 'approved', nullif(cmt,''), now(), m, 'admin', rid) returning * into t;
+  exception when unique_violation then raise exception 'ALREADY_PROCESSED';
+  end;
+  perform set_config('cz.op_method', m, true); perform set_config('cz.op_comment', cmt, true);
+  nb := _balance_move(a.id, amt, 'topup', format('Пополнение в клубе %s (%s)', cd,
+          case m when 'cash' then 'наличные' when 'transfer' then 'банковский перевод' else 'другой способ' end), 'admin', null, t.id);
+  perform _audit('admin', null, 'manual_topup', jsonb_build_object('code', cd, 'phone', a.phone, 'amount', amt, 'method', m, 'comment', cmt, 'balance_before', before, 'balance_after', nb));
+  insert into notifications(event, message, seen) values ('topup_manual',
+    format(E'💵 Ручное пополнение %s: +%s ₽ (%s)\nКлиент: %s, +%s (ID %s)\nБаланс: %s → %s ₽', cd, amt,
+      case m when 'cash' then 'наличные' when 'transfer' then 'перевод' else 'другое' end, a.name, a.phone, _client_id(a.client_no), before, nb), true);
+  return jsonb_build_object('ok', true, 'code', cd, 'balance_before', before, 'balance', nb);
+end $$;
+
+-- Общая история операций с балансом (все клиенты)
+create or replace function admin_balance_ops(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare q text := nullif(btrim(p->>'q'),''); k text := nullif(p->>'kind','');
+begin
+  perform _admin(p);
+  return (select coalesce(jsonb_agg(x order by (x->>'id')::bigint desc), '[]'::jsonb) from (
+    select jsonb_build_object('id', o.id, 'at', o.created_at, 'kind', o.kind, 'amount', o.amount, 'balance_before', o.balance_after - o.amount,
+      'balance_after', o.balance_after, 'method', o.method, 'comment', o.comment, 'description', o.description, 'actor', o.actor,
+      'admin', u.username, 'account_id', a.id, 'name', a.name, 'phone', a.phone, 'client_id', _client_id(a.client_no),
+      'booking_code', b.code, 'topup_code', t.code) x
+    from balance_ops o join client_accounts a on a.id = o.account_id
+      left join admin_users u on u.id = o.admin_id left join bookings b on b.id = o.booking_id left join topups t on t.id = o.topup_id
+    where (k is null or o.kind = k)
+      and (q is null or a.name ilike '%'||q||'%' or b.code ilike '%'||q||'%' or t.code ilike '%'||q||'%'
+           or (regexp_replace(q,'\D','','g') <> '' and a.phone like '%'||regexp_replace(q,'\D','','g')||'%')
+           or (q ~* '^\s*(cz-?)?0*\d+\s*$' and a.client_no = regexp_replace(q,'\D','','g')::bigint))
+    order by o.id desc limit 500) z);
+end $$;
+
 create or replace function admin_whatsapp_test(p jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
 declare st text;
@@ -1337,7 +1424,7 @@ declare f record;
   api text[] := array['get_public_data','get_equipment_photo','get_availability','get_occupancy','quote_booking','create_booking',
     'get_booking','upload_receipt','mark_paid','cancel_my_booking','admin_login','admin_logout','admin_ping','admin_change_password',
     'admin_dashboard','admin_list_bookings','admin_get_booking','admin_get_receipt','admin_booking_action','admin_update_booking',
-    'admin_create_booking','admin_whatsapp_test','admin_calendar','admin_block_create','admin_block_delete','admin_equipment_list','admin_equipment_save',
+    'admin_create_booking','admin_whatsapp_test','admin_account_topup','admin_balance_ops','admin_calendar','admin_block_create','admin_block_delete','admin_equipment_list','admin_equipment_save',
     'admin_equipment_delete','admin_equipment_photo','admin_equipment_status','admin_settings_get','admin_settings_save','admin_tariff_save','admin_tariff_delete',
     'admin_promo_save','admin_promo_delete','admin_notifications','admin_audit','admin_export',
     'client_register','client_login','client_logout','client_me','client_topup_create','client_topup_receipt','client_topup_cancel','client_cancel_booking',

@@ -302,8 +302,20 @@ alter table bookings add column if not exists account_id uuid references client_
 alter table bookings add column if not exists refunded int not null default 0;
 do $$ begin
   alter table bookings drop constraint if exists bookings_payment_status_check;
-  alter table bookings add constraint bookings_payment_status_check check (payment_status in ('unpaid','claimed','verified','onsite','balance'));
+  alter table bookings add constraint bookings_payment_status_check check (payment_status in ('unpaid','claimed','verified','onsite','balance','balance_pending'));
 end $$;
+
+-- ID клиента (CZ-000123), способ оплаты и администратор в истории операций, ручные пополнения
+alter table client_accounts add column if not exists client_no bigserial;
+create unique index if not exists client_accounts_no_uq on client_accounts(client_no);
+alter table balance_ops add column if not exists method text;
+alter table balance_ops add column if not exists comment text;
+alter table balance_ops add column if not exists admin_id uuid references admin_users(id) on delete set null;
+alter table topups add column if not exists method text;
+alter table topups add column if not exists created_by text not null default 'client';
+alter table topups add column if not exists request_id text;
+alter table topups add column if not exists client_sent_at timestamptz;
+create unique index if not exists topups_request_uq on topups(request_id) where request_id is not null;
 
 do $$
 declare t text;

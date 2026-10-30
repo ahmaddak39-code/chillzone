@@ -177,7 +177,7 @@
       <div id="sumBox"></div>
       ${DATA.features && DATA.features.balance ? `<label class="lbl">Способ оплаты</label><div class="pay-choice" id="payCh">
         <label class="${S.pay !== 'balance' ? 'on' : ''}"><input type="radio" name="pm" value="transfer" ${S.pay !== 'balance' ? 'checked' : ''}>💸 Переводом<small>Т-Банк, по номеру телефона</small></label>
-        <label class="${S.pay === 'balance' ? 'on' : ''}"><input type="radio" name="pm" value="balance" ${S.pay === 'balance' ? 'checked' : ''}>💳 С баланса<small id="balInfo">${CLIENT ? 'на балансе ' + rub(CLIENT.balance) : 'нужен вход в кабинет'}</small></label></div><div id="payNote"></div>` : ''}`;
+        <label class="${S.pay === 'balance' ? 'on' : ''}"><input type="radio" name="pm" value="balance" ${S.pay === 'balance' ? 'checked' : ''}>💳 С баланса<small id="balInfo">${CLIENT ? 'доступно ' + rub(avail()) : 'нужен вход в кабинет'}</small></label></div><div id="payNote"></div>` : ''}`;
   }
 
   function bindBooking(it) {
@@ -198,11 +198,12 @@
     const pc = $('#payCh', p);
     if (pc) {
       pc.onchange = e => { S.pay = e.target.value; $$('label', pc).forEach(l => l.classList.toggle('on', l.querySelector('input').checked)); payNote(); validate(); };
-      loadClient().then(() => { const bi = $('#balInfo'); if (bi) bi.textContent = CLIENT ? 'на балансе ' + rub(CLIENT.balance) : 'нужен вход в кабинет'; if (CLIENT) { if (!$('#nm').value || needAcc()) $('#nm').value = CLIENT.name; if (needAcc()) $('#ph').value = fmtPh(CLIENT.phone); } payNote(); validate(); });
+      loadClient().then(() => { const bi = $('#balInfo'); if (bi) bi.textContent = CLIENT ? 'доступно ' + rub(avail()) : 'нужен вход в кабинет'; if (CLIENT) { if (!$('#nm').value || needAcc()) $('#nm').value = CLIENT.name; if (needAcc()) $('#ph').value = fmtPh(CLIENT.phone); } payNote(); validate(); });
     }
     renderBonusNote(it);
   }
   // ---------- личный кабинет ----------
+  const avail = () => CLIENT ? (CLIENT.available ?? CLIENT.balance) : 0;
   const needAcc = () => !!(DATA.features && DATA.features.account_required);
   const fmtPh = p => { const d = String(p || ''); return d.length === 11 ? `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}` : d; };
   const goAccount = id => { location.href = '/account?ret=' + encodeURIComponent('/#book=' + id); };
@@ -221,9 +222,9 @@
     if (!CLIENT) return n.innerHTML = `<div class="note info">Чтобы оплатить с баланса, <a href="/account?ret=${back}"><b>войдите в личный кабинет</b></a> — это займёт минуту.</div>`;
     if (CLIENT.frozen) return n.innerHTML = `<div class="note">Операции по балансу приостановлены. Выберите оплату переводом.</div>`;
     const tot = S.quote ? S.quote.total : 0;
-    n.innerHTML = tot && CLIENT.balance < tot
-      ? `<div class="note">На балансе ${rub(CLIENT.balance)} — не хватает ${rub(tot - CLIENT.balance)}. <a href="/account"><b>Пополнить баланс</b></a> или выберите оплату переводом.</div>`
-      : `<div class="note info">Спишем ${tot ? rub(tot) : 'стоимость'} с баланса — бронь подтвердится сразу. Останется ${rub(CLIENT.balance - tot)}. После оплаты бронь отменить нельзя, деньги не возвращаются.</div>`;
+    n.innerHTML = tot && avail() < tot
+      ? `<div class="note">Доступно ${rub(avail())} — не хватает ${rub(tot - avail())}. <a href="/account"><b>Пополнить баланс</b></a> или выберите оплату переводом.</div>`
+      : `<div class="note info">${tot ? rub(tot) : 'Стоимость'} спишется с баланса <b>только после подтверждения администратором</b>. Подтверждённую бронь отменить нельзя, деньги не возвращаются.</div>`;
   }
   function maskPhone(v) {
     let d = v.replace(/\D/g, ''); if (d.startsWith('8')) d = '7' + d.slice(1); if (d && !d.startsWith('7')) d = '7' + d; d = d.slice(0, 11);
@@ -324,7 +325,7 @@
   function sumHTML(q) {
     const lines = q.lines.map(l => `<div class="ln"><span>${esc(l.label)} · ${CZ.fmtDur(l.minutes)} × ${rub(l.rate)}/ч</span><span>${rub(Math.round(l.rate * l.minutes / 60))}</span></div>`).join('');
     return `<div class="sum">
-      <div class="ln"><span>${CZ.fmtRange(q.starts_at, q.ends_at)}</span></div>
+      <div class="ln"><span>${CZ.fmtDate(q.starts_at)} · начало <b>${CZ.localTime(q.starts_at)}</b> · окончание <b>${CZ.localTime(q.ends_at)}</b></span></div>
       ${lines}
       ${q.extra_sum ? `<div class="ln"><span>Доп. гости: ${q.extra_people} × ${rub(q.extra_person_price)}/ч</span><span>${rub(q.extra_sum)}</span></div>` : ''}
       ${q.discount_sum ? `<div class="ln bonus"><span>${esc(q.discount_label)} −${q.discount_percent}%</span><span>−${rub(q.discount_sum)}</span></div>` : ''}
@@ -344,9 +345,9 @@
     else if (ph.length < 11) msg = 'Введите телефон';
     else if (S.night && !($('#age') || {}).checked) msg = 'Подтвердите возраст';
     else if (S.pay === 'balance' && $('#payCh') && !CLIENT) msg = 'Войдите, чтобы оплатить с баланса';
-    else if (S.pay === 'balance' && $('#payCh') && CLIENT.balance < S.quote.total) msg = 'Недостаточно средств на балансе';
+    else if (S.pay === 'balance' && $('#payCh') && avail() < S.quote.total) msg = 'Недостаточно средств на балансе';
     if ($('#payCh')) payNote();
-    btn.disabled = !!msg; btn.textContent = msg || (S.pay === 'balance' && $('#payCh') ? `Оплатить с баланса · ${rub(S.quote.total)}` : `Забронировать · ${rub(S.quote.total)}`);
+    btn.disabled = !!msg; btn.textContent = msg || (S.pay === 'balance' && $('#payCh') ? `Отправить заявку · с баланса ${rub(S.quote.total)}` : `Отправить заявку · ${rub(S.quote.total)}`);
   }
 
   async function submit(it) {

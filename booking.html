@@ -38,79 +38,82 @@
   const code = new URLSearchParams(location.search).get('c') || '';
   const token = (location.hash.match(/t=([\w]+)/) || [])[1] || (CZ.myBookings().find(b => b.code === code) || {}).token || '';
   let B = null, tick = 0, preview = null;
-  const STEPS = ['awaiting_payment', 'receipt_sent', 'payment_verified', 'confirmed'];
+  // этапы: заявка → отправлена/проверка → подтверждено
+  const STEP = { awaiting_payment: 0, pending_review: 1, receipt_sent: 1, payment_verified: 2, confirmed: 3 };
 
   async function load(silent) {
     try { B = await rpc('get_booking', { code, token }); render(); }
-    catch (e) { if (!silent) $('#app').innerHTML = `<div class="card" style="padding:28px"><h2>Заявка не найдена</h2><p class="muted">Проверьте ссылку. Ссылка на заявку работает только на устройстве, где она была создана, или по полной ссылке.</p><a class="btn btn-neon" href="/#room">На главную</a></div>`; }
+    catch (e) { if (!silent) $('#app').innerHTML = `<div class="card" style="padding:28px"><h2>Заявка не найдена</h2><p class="muted">Проверьте ссылку. Ссылка на заявку работает только на устройстве, где она была создана, или по полной ссылке. Все ваши брони есть в <a href="/account"><u>личном кабинете</u></a>.</p><a class="btn btn-neon" href="/#room">На главную</a></div>`; }
   }
-  function stepIdx(s) { return s === 'pending_review' ? 1 : Math.max(0, STEPS.indexOf(s)); }
-  // Рабочий номер клуба для уведомлений (меняется в админ-панели). Номер для перевода денег — отдельно, в реквизитах.
+  // Рабочий WhatsApp клуба (меняется в админ-панели). Номер для перевода денег — отдельно, в реквизитах.
   const CLUB_WA = () => String(((B && B.notify) || {}).whatsapp || '79285535252').replace(/\D/g, '');
-  function details() {
-    return `Имя: ${B.customer_name}\nОборудование: ${B.equipment_name}${B.equipment_id === 'room' ? ` (${B.people} чел.)` : ''}\nДата: ${CZ.fmtDate(B.starts_at)}\nВремя: ${CZ.localTime(B.starts_at)}–${CZ.localTime(B.ends_at)}\nСумма: ${rub(B.total)}${B.due_now !== B.total ? ` (предоплата ${rub(B.due_now)})` : ''}\nСтатус: ${B.status_ru}`;
+  const isBal = () => ['balance_pending', 'balance'].includes(B.payment_status);
+  const d2 = iso => { return new Intl.DateTimeFormat('ru-RU', { timeZone: CZ.TZ, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso)); };
+  const fmtPh = p => { const d = String(p || ''); return d.length === 11 ? `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}` : d; };
+  function waRequest() {
+    return `Здравствуйте! Хочу оформить ${B.equipment_id === 'room' ? 'бронирование всей игровой комнаты' : 'бронирование'} в CHILL ZONE.\n\n` +
+      `Имя: ${B.customer_name}\nТелефон: ${fmtPh(B.phone)}\nОборудование: ${B.equipment_name}${B.equipment_id === 'room' ? ` (${B.people} чел.)` : ''}\n` +
+      `Дата: ${d2(B.starts_at)}\nВремя: ${CZ.localTime(B.starts_at)}–${CZ.localTime(B.ends_at)}\nПродолжительность: ${CZ.fmtDur(B.paid_minutes)}${B.bonus_minutes ? ` + ${CZ.fmtDur(B.bonus_minutes)} в подарок` : ''}\n` +
+      `Стоимость: ${rub(B.total)}\nСпособ оплаты: ${isBal() ? 'с личного баланса' : 'перевод на Т-Банк' + (B.due_now !== B.total ? ` (предоплата ${rub(B.due_now)})` : '')}\nНомер заявки: ${B.code}\n\n` +
+      `Прошу проверить заявку и подтвердить бронирование.`;
   }
-  function waText() {
-    return `Здравствуйте! Я оплатил бронирование CHILL ZONE.\n\nНомер бронирования: ${B.code}\n${details()}\n\nОтправляю чек об оплате`;
-  }
-  function waNew() { return `Здравствуйте! ${B.equipment_id === 'room' ? 'Я оформил заявку на аренду всей игровой комнаты' : 'Я оформил заявку на бронирование'} CHILL ZONE.\n\nНомер бронирования: ${B.code}\n${details()}`; }
-  function waCancel() { return `Здравствуйте! Я отменил бронирование CHILL ZONE.\n\nНомер бронирования: ${B.code}\n${details()}`; }
+  function waCancel() { return `Здравствуйте! Я отменил заявку CHILL ZONE.\n\nНомер заявки: ${B.code}\nИмя: ${B.customer_name}\nОборудование: ${B.equipment_name}\nДата: ${d2(B.starts_at)}\nВремя: ${CZ.localTime(B.starts_at)}–${CZ.localTime(B.ends_at)}`; }
   const waLink = t => `https://wa.me/${CLUB_WA()}?text=${encodeURIComponent(t)}`;
+
   function render() {
     const s = B.status, pay = B.payment || {};
     const cls = s === 'confirmed' ? 'good' : ['rejected', 'cancelled', 'expired'].includes(s) ? 'bad' : s === 'awaiting_payment' ? '' : 'wait';
     const dead = ['rejected', 'cancelled', 'expired'].includes(s);
-    const idx = stepIdx(s);
+    const open = ['awaiting_payment', 'pending_review', 'receipt_sent', 'payment_verified'].includes(s);
     const msg = {
-      awaiting_payment: 'Время удерживается за вами. Переведите оплату и отправьте чек до окончания таймера.',
-      receipt_sent: 'Чек получен. Администратор проверит поступление денег и подтвердит бронирование. Время закреплено за вами до решения администратора.',
-      pending_review: 'Вы сообщили, что отправили чек в WhatsApp. Администратор проверит поступление денег и подтвердит бронирование. Время закреплено за вами до решения администратора.',
-      payment_verified: 'Оплата проверена. Осталось финальное подтверждение администратора.',
+      awaiting_payment: 'Заявка создана, но <b>ещё не подтверждена</b>. Отправьте её в WhatsApp — администратор проверит и подтвердит бронирование. Время удерживается за вами до окончания таймера.',
+      pending_review: isBal() ? `Заявка отправлена и ожидает подтверждения администратора. ${rub(B.total)} спишутся с баланса только после подтверждения.` : 'Заявка ожидает подтверждения администратора.',
+      receipt_sent: 'Администратор проверяет поступление оплаты. Бронирование станет окончательным только после его подтверждения. Время закреплено за вами до решения администратора.',
+      payment_verified: 'Оплата проверена. Осталось подтверждение администратора.',
       confirmed: 'Бронирование подтверждено. Ждём вас в CHILL ZONE!',
-      rejected: 'Заявка отклонена администратором. Если это ошибка — позвоните нам.',
+      rejected: 'Заявка отклонена. Если это ошибка — позвоните нам.',
       cancelled: 'Заявка отменена, время освобождено.',
-      expired: 'Время на оплату истекло, место освобождено. Вы можете оформить новую заявку.'
+      expired: 'Истекло время оплаты — время освобождено. Вы можете оформить новую заявку.'
     }[s];
+    const sr = s === 'confirmed' ? 'Бронирование подтверждено' : s === 'rejected' ? 'Заявка отклонена' : B.status_ru;
     let html = `<div class="kicker">Заявка</div><h1 style="font-size:clamp(30px,6vw,48px)">${esc(B.code)}</h1>
-      <span class="status-big ${cls}">${esc(B.status_ru)}</span>
-      ${dead ? '' : `<div class="tl">${STEPS.map((x, i) => `<div class="${i <= idx ? 'on' : ''}"></div>`).join('')}</div>`}
-      <p class="muted" style="margin-top:${dead ? 18 : 0}px">${msg}</p>
-      <div class="card" style="padding:22px;margin:20px 0"><dl class="kv">
+      <span class="status-big ${cls}">${esc(sr)}</span>
+      ${dead ? '' : `<div class="tl">${[0, 1, 2, 3].map(i => `<div class="${i <= (STEP[s] ?? 0) ? 'on' : ''}"></div>`).join('')}</div>`}
+      <p class="muted" style="margin-top:${dead ? 18 : 0}px">${msg}</p>`;
+    if (open) html += `<div class="wa-big"><a class="btn btn-wa btn-wide" id="waGo" href="${waLink(waRequest())}" target="_blank" rel="noopener">💬 ОТПРАВИТЬ ЗАЯВКУ В WHATSAPP</a>
+        <p class="dim" style="font-size:13px;margin:8px 0 0">Откроется WhatsApp клуба с готовым сообщением — просто нажмите «Отправить».${s === 'awaiting_payment' ? ' Затем вернитесь сюда и нажмите кнопку ниже.' : ''}</p>
+        ${s === 'awaiting_payment' ? `<button class="btn btn-wide" id="sentWa" style="margin-top:10px">✅ Я отправил заявку в WhatsApp</button>` : ''}
+        ${s === 'awaiting_payment' && B.hold_until ? `<p style="margin:12px 0 0">Время удерживается ещё: <span class="countdown" id="cd">--:--</span></p>` : ''}</div>`;
+    html += `<div class="card" style="padding:22px;margin:20px 0"><dl class="kv">
         <dt>Оборудование</dt><dd>${esc(B.equipment_name)}</dd>
         <dt>Дата</dt><dd>${CZ.fmtDate(B.starts_at)}</dd>
         <dt>Время</dt><dd>${CZ.localTime(B.starts_at)}–${CZ.localTime(B.ends_at)}</dd>
         <dt>Продолжительность</dt><dd>${CZ.fmtDur(B.paid_minutes)}${B.bonus_minutes ? ` + ${CZ.fmtDur(B.bonus_minutes)} в подарок` : ''}</dd>
         ${B.equipment_id === 'room' ? `<dt>Гостей</dt><dd>${B.people}</dd>` : ''}
         <dt>Имя</dt><dd>${esc(B.customer_name)}</dd>
-        <dt>Итого</dt><dd>${rub(B.total)}</dd>
-        ${B.payment_status === 'balance' ? `<dt>Оплата</dt><dd>💳 Оплачено с баланса</dd>` : B.due_now !== B.total ? `<dt>Предоплата</dt><dd>${rub(B.due_now)}</dd>` : ''}
+        <dt>Стоимость</dt><dd>${rub(B.total)}</dd>
+        <dt>Оплата</dt><dd>${B.payment_status === 'balance' ? '💳 Оплачено с баланса' : B.payment_status === 'balance_pending' ? '💳 С баланса — после подтверждения' : B.payment_status === 'onsite' ? 'На месте' : B.payment_status === 'verified' ? 'Перевод — проверен' : 'Перевод на Т-Банк' + (B.due_now !== B.total ? ` · предоплата ${rub(B.due_now)}` : '')}</dd>
         ${B.refunded ? `<dt>Возврат</dt><dd>${rub(B.refunded)} на баланс</dd>` : ''}
       </dl></div>`;
-    if (s === 'awaiting_payment' || s === 'receipt_sent' || s === 'pending_review') {
+    if (open && !isBal() && s !== 'payment_verified') {
       html += `<div class="pay-box">
         <div class="kicker" style="color:#ffe14d">Оплата переводом</div>
         <p class="muted" style="margin:0">Сумма к переводу</p><div class="amount">${rub(B.due_now)}</div>
         <p style="margin:12px 0 0"><b>${esc(pay.bank || 'Т-Банк')}</b> · перевод по номеру телефона</p>
         <div class="pay-phone"><b>${esc(pay.phone || '')}</b><button class="btn btn-sm" id="copyPh">Скопировать номер</button></div>
-        <p class="dim" style="font-size:13px;margin:0">В комментарии к переводу можно указать номер брони ${esc(B.code)}.</p>
-        ${s === 'awaiting_payment' && B.hold_until ? `<p style="margin:14px 0 0">Время удерживается ещё: <span class="countdown" id="cd">--:--</span></p>` : ''}
+        <p class="dim" style="font-size:13px;margin:0">В комментарии к переводу можно указать номер заявки ${esc(B.code)}. Чек можно приложить в WhatsApp или загрузить ниже.</p>
       </div>
-      <h3 style="margin:28px 0 12px;font-size:20px">Отправьте чек</h3>
-      <div class="stack">
+      <div class="stack" style="margin-top:14px">
         <label class="drop" id="drop"><input type="file" id="file" accept="image/*,application/pdf"><b>📎 Загрузить чек на сайт</b><br><span class="muted" style="font-size:14px">Фото или скриншот перевода, PDF</span>${preview ? `<img class="receipt-prev" src="${preview}" alt="Чек">` : ''}</label>
-        ${B.has_receipt ? '<div class="note info">✅ Чек загружен на сайт и передан администратору.</div>' : ''}
-        <div style="text-align:center" class="dim">или</div>
-        <a class="btn btn-wa btn-wide" id="wa" href="${waLink(waText())}" target="_blank" rel="noopener">Отправить чек в WhatsApp</a>
-        ${s === 'awaiting_payment' ? `<p class="dim" style="font-size:13px;margin:0">WhatsApp откроется с готовым текстом — прикрепите фото чека и нажмите «Отправить». После этого нажмите кнопку ниже.</p>
-        <button class="btn btn-wide" id="sentWa">Я отправил чек в WhatsApp</button>` : ''}
-      </div>
-      <div class="note info" style="margin-top:20px">Бронирование становится окончательным только после того, как администратор проверит поступление денег.</div>`;
+        ${B.has_receipt ? '<div class="note info">✅ Чек загружен и передан администратору.</div>' : ''}
+      </div>`;
     }
-    if (s === 'awaiting_payment') html += `<p style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-sm" href="${waLink(waNew())}" target="_blank" rel="noopener">💬 Написать клубу о заявке</a><button class="btn btn-ghost btn-sm" id="cancel">Отменить заявку</button></p>`;
+    if (open && s !== 'confirmed') html += `<div class="note info" style="margin-top:20px">Бронирование становится окончательным только после подтверждения администратором${isBal() ? '. Деньги с баланса списываются в момент подтверждения' : ' и проверки поступления денег'}.</div>`;
+    if (B.can_cancel ?? s === 'awaiting_payment') html += `<p style="margin-top:16px"><button class="btn btn-ghost btn-sm" id="cancel">Отменить заявку</button></p>`;
     if (s === 'confirmed') html += `<p class="dim" style="font-size:13px;margin-top:6px">Бронь оплачена и подтверждена — отменить её нельзя, оплата не возвращается.</p>`;
     if (s === 'cancelled') html += `<p style="margin-top:14px"><a class="btn btn-sm btn-wa" href="${waLink(waCancel())}" target="_blank" rel="noopener">Сообщить клубу об отмене в WhatsApp</a></p>`;
     if (dead) html += `<a class="btn btn-neon" href="/#room" style="margin-top:10px">Оформить новую бронь</a>`;
-    html += `<p class="dim" style="margin-top:30px;font-size:13px">Сохраните эту страницу — здесь всегда актуальный статус. Вопросы: <a href="tel:+79285535252">+7 928 553-52-52</a></p>`;
+    html += `<p class="dim" style="margin-top:30px;font-size:13px">Сохраните эту страницу — здесь всегда актуальный статус. Все заявки есть в <a href="/account"><u>личном кабинете</u></a>. Вопросы: <a href="tel:+79285535252">+7 928 553-52-52</a></p>`;
     $('#app').innerHTML = html;
     bind();
   }
@@ -125,8 +128,8 @@
         toast('Чек загружен и отправлен администратору', 'ok'); render();
       } catch (e) { toast(e.message, 'err'); }
     };
-    const s = $('#sentWa'); if (s) s.onclick = async () => { try { B = await rpc('mark_paid', { code, token }); toast('Отлично! Ждите подтверждения администратора', 'ok'); render(); } catch (e) { toast(e.message, 'err'); } };
-    const x = $('#cancel'); if (x) x.onclick = async () => { if (!confirm(x.dataset.refund != null ? `Отменить бронь? На баланс вернётся ${(+x.dataset.refund).toLocaleString('ru-RU')} ₽.` : 'Отменить заявку и освободить время?')) return; try { B = await rpc('cancel_my_booking', { code, token }); render(); } catch (e) { toast(e.message, 'err'); } };
+    const s = $('#sentWa'); if (s) s.onclick = async () => { try { B = await rpc('mark_paid', { code, token }); toast('Спасибо! Администратор проверит заявку и подтвердит её', 'ok'); render(); } catch (e) { toast(e.message, 'err'); } };
+    const x = $('#cancel'); if (x) x.onclick = async () => { if (!confirm('Отменить заявку и освободить время?')) return; try { B = await rpc('cancel_my_booking', { code, token }); render(); } catch (e) { toast(e.message, 'err'); } };
     clearInterval(tick);
     if ($('#cd')) {
       const skew = Date.now() - new Date(B.server_now).getTime();
@@ -135,7 +138,8 @@
     }
   }
   load();
-  setInterval(() => { if (!document.hidden && B && !['confirmed', 'rejected', 'cancelled', 'expired'].includes(B.status)) load(true); }, 20000);
+  // статус обновляется сам, пока заявка ждёт решения администратора
+  setInterval(() => { if (B && !document.hidden && ['pending_review', 'receipt_sent', 'payment_verified'].includes(B.status)) load(true); }, 30000);
 })();
 </script>
 </body>

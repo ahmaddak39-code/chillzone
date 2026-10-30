@@ -137,3 +137,7 @@
 .hist div{white-space:pre-line}
 .pay.balance{color:#58f0ff}
 a.kpi{display:block;color:inherit;text-decoration:none}
+.btabs{gap:6px}
+.btabs button{flex:1 1 auto;min-width:0;height:auto;min-height:42px;padding:8px 12px;font-size:13px;line-height:1.25;white-space:normal}
+.big-topup{min-height:56px;font-size:15px;letter-spacing:.08em}
+.pay.balance_pending{color:#ffd166}
