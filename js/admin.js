@@ -317,7 +317,7 @@
         <button class="btn btn-sm" id="cPrev">←</button><input class="inp" type="date" id="cD" value="${CAL_DATE}" style="width:auto;height:40px"><button class="btn btn-sm" id="cNext">→</button><button class="btn btn-sm" id="cToday">Сегодня</button>
         <span class="muted" id="cTitle"></span></div>
       <div class="cal-wrap"><div class="cal" id="cal"></div></div>
-      <p class="dim" style="font-size:12px;margin-top:10px">🟩 подтверждено · 🟪 на проверке · 🟨 ожидает оплаты · ▨ блокировка. Нажмите на бронь, чтобы открыть, на блокировку — чтобы снять её. Вся комната занимает все устройства.</p>`;
+      <p class="dim" style="font-size:12px;margin-top:10px">🟩 подтверждено · 🟪 на проверке · 🟨 ожидает оплаты · ▨ блокировка. Оплата: 💳 перевод проверен · 🏪 на месте · 📎 клиент прислал чек · ⏳ не оплачено. 🌐 — бронь всей комнаты (занимает все устройства). 🔒 в строке «Вся комната» — какое устройство мешает арендовать комнату целиком.</p>`;
     const draw = async () => {
       $('#cTitle').textContent = `${CZ.wdOf(CAL_DATE)}, ${CZ.fmtDateStr(CAL_DATE)}`;
       const d = await api('admin_calendar', { date: CAL_DATE });
@@ -326,8 +326,12 @@
       const rows = d.equipment.map(e => {
         const own = d.bookings.filter(b => b.equipment_id === e.id || (e.id !== 'room' && b.equipment_id === 'room'));
         const bl = d.blocks.filter(k => k.equipment_id === e.id || (e.id !== 'room' && k.equipment_id === 'room'));
+        // строка «Вся комната»: показываем, какие устройства мешают арендовать комнату целиком
+        const devBusy = e.id === 'room' ? d.bookings.filter(b => b.equipment_id !== 'room').concat(d.blocks.filter(k => k.equipment_id !== 'room').map(k => Object.assign({ isBlock: true }, k))) : [];
+        const payIcon = b => b.payment_status === 'verified' ? '💳' : b.payment_status === 'onsite' ? '🏪' : b.payment_status === 'claimed' ? '📎' : '⏳';
         return `<div class="cal-row"><div class="cal-name">${esc(e.name)}${e.status !== 'ok' ? ' ⚠️' : ''}</div><div class="cal-track">
-          ${own.map(b => `<div class="cal-bar ${b.status === 'confirmed' ? 'confirmed' : b.status === 'awaiting_payment' ? 'hold' : 'wait'}" style="${pos(b.starts_at, b.ends_at)}" data-bk="${b.id}" title="${esc(b.code)} ${esc(b.name)} ${CZ.localTime(b.starts_at)}–${CZ.localTime(b.ends_at)} · ${b.status_ru}">${b.equipment_id === 'room' && e.id !== 'room' ? '🌐 ' : ''}${CZ.localTime(b.starts_at)} ${esc(b.name)}</div>`).join('')}
+          ${devBusy.map(b => `<div class="cal-bar devlock" style="${pos(b.starts_at, b.ends_at)}" ${b.isBlock ? '' : `data-bk="${b.id}"`} title="Комнату нельзя забронировать целиком: занято ${esc(b.isBlock ? eqName(b.equipment_id) + ' (блокировка)' : (b.equipment_name || eqName(b.equipment_id)) + ' — ' + b.name)}">🔒 ${esc(b.isBlock ? eqName(b.equipment_id) : (b.equipment_name || eqName(b.equipment_id)))}</div>`).join('')}
+          ${own.map(b => `<div class="cal-bar ${b.status === 'confirmed' ? 'confirmed' : b.status === 'awaiting_payment' ? 'hold' : 'wait'}" style="${pos(b.starts_at, b.ends_at)}" data-bk="${b.id}" title="${esc(b.code)} · ${esc(b.equipment_name || eqName(b.equipment_id))} · ${esc(b.name)} · ${CZ.localTime(b.starts_at)}–${CZ.localTime(b.ends_at)} · ${b.status_ru} · ${PAY[b.payment_status] || ''}">${b.equipment_id === 'room' && e.id !== 'room' ? '🌐 ' : ''}${payIcon(b)} ${CZ.localTime(b.starts_at)} ${esc(b.name)}</div>`).join('')}
           ${bl.map(k => `<div class="cal-bar block" style="${pos(k.starts_at, k.ends_at)}" data-block="${k.id}" title="${esc(k.reason)}">⛔ ${esc(k.reason || 'Блок')}</div>`).join('')}
         </div></div>`;
       }).join('');

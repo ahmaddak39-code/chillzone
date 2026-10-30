@@ -129,7 +129,7 @@
       ${badge}
       <p class="muted" style="margin-top:12px">${esc(it.description)}</p>
       ${it.features && it.features.length ? `<div class="bk-feat">${it.features.map(f => `<span>${esc(f)}</span>`).join('')}</div>` : ''}`;
-    if (it.kind === 'room' && roomS.extra_person_price) body += `<div class="note info">Каждый дополнительный человек сверх ${roomS.base_people} — ${rub(roomS.extra_person_price)}/час. На время брони всей комнаты все устройства закрываются для других гостей.</div>`;
+    if (it.kind === 'room' && roomS.extra_person_price) body += `<div class="note info">Каждый дополнительный человек сверх ${roomS.base_people} — ${rub(roomS.extra_person_price)}/час. На время брони всей комнаты все устройства закрываются для других гостей.<br>В расписании ниже показано только то время, когда свободно <b>всё</b> оборудование.</div>`;
     let foot = '';
     if (it.kind === 'tv') {
       body += `<div class="note info">Телевизор 75″ находится в PlayStation-зоне и бронируется вместе с PlayStation.</div>`;

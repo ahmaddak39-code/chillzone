@@ -715,7 +715,8 @@ begin
   return jsonb_build_object(
     'equipment', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'name', name, 'kind', kind, 'status', status) order by sort), '[]'::jsonb) from equipment where is_active and kind <> 'tv'),
     'bookings', (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'code', b.code, 'equipment_id', b.equipment_id, 'name', b.customer_name,
-        'starts_at', b.starts_at, 'ends_at', b.ends_at, 'status', b.status, 'status_ru', _status_ru(b.status), 'total', b.total)), '[]'::jsonb)
+        'starts_at', b.starts_at, 'ends_at', b.ends_at, 'status', b.status, 'status_ru', _status_ru(b.status), 'total', b.total,
+        'payment_status', b.payment_status, 'people', b.people, 'equipment_name', b.equipment_name)), '[]'::jsonb)
         from bookings b where b.status not in ('rejected','cancelled','expired') and tstzrange(b.starts_at, b.ends_at) && tstzrange(f, t)),
     'blocks', (select coalesce(jsonb_agg(jsonb_build_object('id', k.id, 'equipment_id', k.equipment_id, 'starts_at', k.starts_at, 'ends_at', k.ends_at, 'reason', k.reason)), '[]'::jsonb)
         from blocks k where tstzrange(k.starts_at, k.ends_at) && tstzrange(f, t)));
