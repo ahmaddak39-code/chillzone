@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CHILL ZONE — твоя игровая вселенная в Хасавюрте</title>
+<meta name="description" content="CHILL ZONE — игровое пространство в Хасавюрте: 5 игровых ПК с RTX, PlayStation-зона с ТВ 75″, VR, гоночный руль, аэрохоккей, настольный теннис и футбол. Онлайн-бронирование.">
+<meta property="og:title" content="CHILL ZONE — твоя игровая вселенная">
+<meta property="og:description" content="Играй. Соревнуйся. Отдыхай. Бронируй компьютер, PlayStation или всю комнату онлайн.">
+<meta property="og:image" content="/img/og.jpg">
+<meta name="theme-color" content="#050716">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="bg-fx"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div></div>
+
+<!-- ================= HERO ================= -->
+<section class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="hero-logo" id="heroLogo"></div>
+      <h1 aria-label="Твоя игровая вселенная">
+        <span class="l"><span>Твоя</span></span>
+        <span class="l"><span class="grad-text">игровая</span></span>
+        <span class="l"><span class="glitch" data-t="вселенная">вселенная</span></span>
+      </h1>
+      <p class="sub"><b>Играй.</b> Соревнуйся. Отдыхай.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-neon" href="#room" data-go="room">Забронировать</a>
+        <a class="btn" href="#fun">Выбрать оборудование</a>
+        <a class="btn btn-ghost" href="#room" data-go="tour">Посмотреть игровую зону</a>
+      </div>
+      <div class="hero-stats">
+        <div><b>5</b>игровых ПК с RTX</div>
+        <div><b>75″</b>PlayStation-зона</div>
+        <div><b>VR</b>и гоночный руль</div>
+      </div>
+    </div>
+    <div class="hero-visual" id="heroRoom" aria-label="3D-сцена игровой комнаты"></div>
+  </div>
+  <div class="scroll-hint">Листай</div>
+</section>
+
+<!-- ================= 3D КОМНАТА ================= -->
+<section class="sec" id="room">
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <div class="kicker rv">Интерактивная карта</div>
+        <h2 class="h2 rv d1">Выбери своё <span class="grad-text">место</span></h2>
+        <p class="lead rv d2">Нажми на компьютер, PlayStation, руль или любое развлечение — камера приблизится, а справа появятся цена и свободное время.</p>
+      </div>
+    </div>
+    <div class="room-wrap rv d2" id="roomWrap">
+      <div id="room3d" style="position:absolute;inset:0"></div>
+      <div class="room-tools">
+        <button class="tbtn" id="btnWhole">🌐 Вся комната</button>
+        <label class="tbtn" title="Показать занятость на выбранное время">🕒 <select id="viewWhen" aria-label="Время просмотра"></select></label>
+        <button class="tbtn" id="btnReset" hidden>↺ Общий вид</button>
+      </div>
+      <div class="room-hint">Нажми на объект · тяни, чтобы повернуть · сведи пальцы для зума</div>
+      <div class="room-legend"><span><i style="color:var(--ok);background:var(--ok)"></i>Свободно</span><span><i style="color:var(--sel);background:var(--sel)"></i>Выбрано</span><span><i style="color:var(--busy);background:var(--busy)"></i>Занято</span><span><i style="color:var(--off);background:var(--off)"></i>Недоступно</span></div>
+      <div class="room-zoom"><button id="zIn" aria-label="Приблизить">+</button><button id="zOut" aria-label="Отдалить">−</button></div>
+      <aside class="bk-panel" id="panel" aria-live="polite"></aside>
+    </div>
+    <div class="room-quick" id="quick"></div>
+  </div>
+</section>
+<div class="scrim" id="scrim"></div>
+
+<!-- ================= РАЗВЛЕЧЕНИЯ ================= -->
+<section class="sec" id="fun">
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <div class="kicker rv">Наши развлечения</div>
+        <h2 class="h2 rv d1">Всё для <span class="grad-text">игры</span></h2>
+      </div>
+      <a class="btn rv d2" href="/prices">Все цены</a>
+    </div>
+    <div class="fun-grid" id="funGrid"></div>
+    <div class="room-cta rv" id="roomCta">
+      <img src="/img/room.webp" alt="Игровая комната CHILL ZONE" loading="lazy">
+      <div class="in">
+        <div class="kicker">Для компании</div>
+        <h3>Забронируй всю игровую комнату</h3>
+        <p class="muted" id="roomCtaText">Вся комната только для вашей компании.</p>
+        <div class="bk-price"><b id="roomCtaPrice">—</b><span class="muted">/ час</span></div>
+        <button class="btn btn-neon" data-pick="room">Забронировать всю комнату</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ФОТО ================= -->
+<section class="sec" id="gallery" style="padding-top:20px">
+  <div class="wrap">
+    <div class="kicker rv">Вживую</div>
+    <h2 class="h2 rv d1">Так выглядит <span class="grad-text">CHILL ZONE</span></h2>
+    <div class="gal rv d2">
+      <figure class="g1"><img src="/img/room.webp" alt="Общий вид зала" loading="lazy"><figcaption>Общий зал</figcaption></figure>
+      <figure><img src="/img/pcs.webp" alt="Игровые компьютеры" loading="lazy"><figcaption>Игровые ПК</figcaption></figure>
+      <figure><img src="/img/ps.webp" alt="PlayStation-зона" loading="lazy"><figcaption>PlayStation · 75″</figcaption></figure>
+      <figure><img src="/img/wheel.webp" alt="Гоночный симулятор" loading="lazy"><figcaption>Руль и Forza Horizon</figcaption></figure>
+      <figure><img src="/img/airhockey.webp" alt="Аэрохоккей" loading="lazy"><figcaption>Аэрохоккей</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<!-- ================= АКЦИИ ================= -->
+<section class="sec" id="promo" style="padding-top:40px">
+  <div class="wrap">
+    <div class="sec-head">
+      <div><div class="kicker rv">Акции</div><h2 class="h2 rv d1">Бонусы и <span class="grad-text">розыгрыши</span></h2></div>
+      <a class="btn rv d2" href="/promo">Все акции</a>
+    </div>
+    <div class="promo-grid" id="promoGrid"></div>
+  </div>
+</section>
+
+<!-- ================= КАК НАС НАЙТИ ================= -->
+<section class="sec" id="contacts">
+  <div class="wrap">
+    <div class="kicker rv">Как нас найти</div>
+    <h2 class="h2 rv d1">Ждём тебя в <span class="grad-text">Хасавюрте</span></h2>
+    <div class="contacts-grid rv d2" id="contactsBox"></div>
+  </div>
+</section>
+
+<div class="mob-cta" id="mobCta"><a class="btn btn-neon" href="#room" data-go="room">Забронировать</a></div>
+
+<script src="/config.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/room3d.js"></script>
+<script src="/js/shared.js"></script>
+<script src="/js/home.js"></script>
+</body>
+</html>

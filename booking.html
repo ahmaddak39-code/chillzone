@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Бронирование — CHILL ZONE</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#050716">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="bg-fx"><div class="orb o1"></div><div class="orb o2"></div></div>
+<main class="wrap page-top"><div class="bk-page" id="app"><p class="muted">Загружаю заявку…</p></div></main>
+<script src="/config.js"></script>
+<script src="/js/api.js"></script>
+<script>
+(function () {
+  const { $, esc, rub, rpc, toast } = CZ;
+  CZ.header(); CZ.footer();
+  const code = new URLSearchParams(location.search).get('c') || '';
+  const token = (location.hash.match(/t=([\w]+)/) || [])[1] || (CZ.myBookings().find(b => b.code === code) || {}).token || '';
+  let B = null, tick = 0, preview = null;
+  const STEPS = ['awaiting_payment', 'receipt_sent', 'payment_verified', 'confirmed'];
+
+  async function load(silent) {
+    try { B = await rpc('get_booking', { code, token }); render(); }
+    catch (e) { if (!silent) $('#app').innerHTML = `<div class="card" style="padding:28px"><h2>Заявка не найдена</h2><p class="muted">Проверьте ссылку. Ссылка на заявку работает только на устройстве, где она была создана, или по полной ссылке.</p><a class="btn btn-neon" href="/#room">На главную</a></div>`; }
+  }
+  function stepIdx(s) { return s === 'pending_review' ? 1 : Math.max(0, STEPS.indexOf(s)); }
+  function waText() {
+    return `Здравствуйте! Я оплатил бронирование CHILL ZONE.\n\nНомер бронирования: ${B.code}.\n\nОборудование: ${B.equipment_name}.\n\nДата: ${CZ.fmtDate(B.starts_at)}.\n\nВремя: ${CZ.localTime(B.starts_at)}–${CZ.localTime(B.ends_at)}.\n\nСумма: ${rub(B.due_now)}.\n\nОтправляю чек об оплате`;
+  }
+  function render() {
+    const s = B.status, pay = B.payment || {};
+    const cls = s === 'confirmed' ? 'good' : ['rejected', 'cancelled', 'expired'].includes(s) ? 'bad' : s === 'awaiting_payment' ? '' : 'wait';
+    const dead = ['rejected', 'cancelled', 'expired'].includes(s);
+    const idx = stepIdx(s);
+    const msg = {
+      awaiting_payment: 'Время удерживается за вами. Переведите оплату и отправьте чек до окончания таймера.',
+      receipt_sent: 'Чек получен. Администратор проверит поступление денег и подтвердит бронирование. Время закреплено за вами до решения администратора.',
+      pending_review: 'Вы сообщили, что отправили чек в WhatsApp. Администратор проверит поступление денег и подтвердит бронирование. Время закреплено за вами до решения администратора.',
+      payment_verified: 'Оплата проверена. Осталось финальное подтверждение администратора.',
+      confirmed: 'Бронирование подтверждено. Ждём вас в CHILL ZONE!',
+      rejected: 'Заявка отклонена администратором. Если это ошибка — позвоните нам.',
+      cancelled: 'Заявка отменена, время освобождено.',
+      expired: 'Время на оплату истекло, место освобождено. Вы можете оформить новую заявку.'
+    }[s];
+    let html = `<div class="kicker">Заявка</div><h1 style="font-size:clamp(30px,6vw,48px)">${esc(B.code)}</h1>
+      <span class="status-big ${cls}">${esc(B.status_ru)}</span>
+      ${dead ? '' : `<div class="tl">${STEPS.map((x, i) => `<div class="${i <= idx ? 'on' : ''}"></div>`).join('')}</div>`}
+      <p class="muted" style="margin-top:${dead ? 18 : 0}px">${msg}</p>
+      <div class="card" style="padding:22px;margin:20px 0"><dl class="kv">
+        <dt>Оборудование</dt><dd>${esc(B.equipment_name)}</dd>
+        <dt>Дата</dt><dd>${CZ.fmtDate(B.starts_at)}</dd>
+        <dt>Время</dt><dd>${CZ.localTime(B.starts_at)}–${CZ.localTime(B.ends_at)}</dd>
+        <dt>Продолжительность</dt><dd>${CZ.fmtDur(B.paid_minutes)}${B.bonus_minutes ? ` + ${CZ.fmtDur(B.bonus_minutes)} в подарок` : ''}</dd>
+        ${B.equipment_id === 'room' ? `<dt>Гостей</dt><dd>${B.people}</dd>` : ''}
+        <dt>Имя</dt><dd>${esc(B.customer_name)}</dd>
+        <dt>Итого</dt><dd>${rub(B.total)}</dd>
+        ${B.due_now !== B.total ? `<dt>Предоплата</dt><dd>${rub(B.due_now)}</dd>` : ''}
+      </dl></div>`;
+    if (s === 'awaiting_payment' || s === 'receipt_sent' || s === 'pending_review') {
+      html += `<div class="pay-box">
+        <div class="kicker" style="color:#ffe14d">Оплата переводом</div>
+        <p class="muted" style="margin:0">Сумма к переводу</p><div class="amount">${rub(B.due_now)}</div>
+        <p style="margin:12px 0 0"><b>${esc(pay.bank || 'Т-Банк')}</b> · перевод по номеру телефона</p>
+        <div class="pay-phone"><b>${esc(pay.phone || '')}</b><button class="btn btn-sm" id="copyPh">Скопировать номер</button></div>
+        <p class="dim" style="font-size:13px;margin:0">В комментарии к переводу можно указать номер брони ${esc(B.code)}.</p>
+        ${s === 'awaiting_payment' && B.hold_until ? `<p style="margin:14px 0 0">Время удерживается ещё: <span class="countdown" id="cd">--:--</span></p>` : ''}
+      </div>
+      <h3 style="margin:28px 0 12px;font-size:20px">Отправьте чек</h3>
+      <div class="stack">
+        <label class="drop" id="drop"><input type="file" id="file" accept="image/*,application/pdf"><b>📎 Загрузить чек на сайт</b><br><span class="muted" style="font-size:14px">Фото или скриншот перевода, PDF</span>${preview ? `<img class="receipt-prev" src="${preview}" alt="Чек">` : ''}</label>
+        ${B.has_receipt ? '<div class="note info">✅ Чек загружен на сайт и передан администратору.</div>' : ''}
+        <div style="text-align:center" class="dim">или</div>
+        <a class="btn btn-wa btn-wide" id="wa" href="https://wa.me/${esc(pay.whatsapp || '79280605550')}?text=${encodeURIComponent(waText())}" target="_blank" rel="noopener">Отправить чек в WhatsApp</a>
+        ${s === 'awaiting_payment' ? `<p class="dim" style="font-size:13px;margin:0">WhatsApp откроется с готовым текстом — прикрепите фото чека и нажмите «Отправить». После этого нажмите кнопку ниже.</p>
+        <button class="btn btn-wide" id="sentWa">Я отправил чек в WhatsApp</button>` : ''}
+      </div>
+      <div class="note info" style="margin-top:20px">Бронирование становится окончательным только после того, как администратор проверит поступление денег.</div>`;
+    }
+    if (s === 'awaiting_payment') html += `<p style="margin-top:20px"><button class="btn btn-ghost btn-sm" id="cancel">Отменить заявку</button></p>`;
+    if (dead) html += `<a class="btn btn-neon" href="/#room" style="margin-top:10px">Оформить новую бронь</a>`;
+    html += `<p class="dim" style="margin-top:30px;font-size:13px">Сохраните эту страницу — здесь всегда актуальный статус. Вопросы: <a href="tel:+79285535252">+7 928 553-52-52</a></p>`;
+    $('#app').innerHTML = html;
+    bind();
+  }
+  function bind() {
+    const c = $('#copyPh'); if (c) c.onclick = async () => { (await CZ.copy((B.payment.phone || '').replace(/[^\d+]/g, ''))) ? toast('Номер скопирован', 'ok') : toast('Не удалось скопировать', 'err'); };
+    const f = $('#file'); if (f) f.onchange = async () => {
+      const file = f.files[0]; if (!file) return;
+      try {
+        toast('Загружаю чек…');
+        const p = await CZ.fileToPayload(file); preview = p.preview || null;
+        B = await rpc('upload_receipt', { code, token, mime: p.mime, data: p.data });
+        toast('Чек загружен и отправлен администратору', 'ok'); render();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const s = $('#sentWa'); if (s) s.onclick = async () => { try { B = await rpc('mark_paid', { code, token }); toast('Отлично! Ждите подтверждения администратора', 'ok'); render(); } catch (e) { toast(e.message, 'err'); } };
+    const x = $('#cancel'); if (x) x.onclick = async () => { if (!confirm('Отменить заявку и освободить время?')) return; try { B = await rpc('cancel_my_booking', { code, token }); render(); } catch (e) { toast(e.message, 'err'); } };
+    clearInterval(tick);
+    if ($('#cd')) {
+      const skew = Date.now() - new Date(B.server_now).getTime();
+      const upd = () => { const left = new Date(B.hold_until).getTime() - (Date.now() - skew); if (left <= 0) { clearInterval(tick); load(true); return; } $('#cd').textContent = `${Math.floor(left / 60000)}:${CZ.pad(Math.floor(left / 1000) % 60)}`; };
+      upd(); tick = setInterval(upd, 1000);
+    }
+  }
+  load();
+  setInterval(() => { if (!document.hidden && B && !['confirmed', 'rejected', 'cancelled', 'expired'].includes(B.status)) load(true); }, 20000);
+})();
+</script>
+</body>
+</html>
