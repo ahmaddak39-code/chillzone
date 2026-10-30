@@ -140,10 +140,10 @@
       this.items = items;
       items.forEach(it => {
         if (it.kind === 'room') return this.addRoomMarker(it);
-        const model = MODELS[it.kind] || MODELS.other;
+        const model = MODELS[it.model || it.kind] || MODELS[it.kind] || MODELS.other; const sc = Math.max(.4, Math.min(2.5, +it.map_scale || 1));
         const el = document.createElement('div'); el.className = 'r3-obj'; el.dataset.id = it.id; el.dataset.st = 'free';
-        el.style.transform = `translate3d(${it.map_x}px,${it.map_y}px,0) rotateZ(${it.map_rot || 0}deg)`;
-        el.setAttribute('role', 'button'); el.setAttribute('aria-label', it.name);
+        el.style.transform = `translate3d(${it.map_x}px,${it.map_y}px,0) rotateZ(${it.map_rot || 0}deg) scale3d(${sc},${sc},${sc})`;
+        el.style.setProperty('--or', (+it.map_rot || 0) + 'deg'); el.setAttribute('role', 'button'); el.setAttribute('aria-label', it.name);
         const g = document.createElement('div'); g.style.cssText = 'position:absolute;left:0;top:0;transform-style:preserve-3d';
         const info = model(g);
         const pad = document.createElement('div'); pad.className = 'pad';
@@ -151,7 +151,7 @@
         el.appendChild(pad); el.appendChild(g);
         if (this.o.labels !== false) {
           const lb = document.createElement('div'); lb.className = 'r3-label'; lb.style.transform = `translate3d(0,0,${info.labelZ}px)`;
-          lb.innerHTML = `<div>${it.name.replace(/</g, '&lt;')}</div>`; el.appendChild(lb);
+          lb.innerHTML = `<div>${String(it.label || it.name).replace(/</g, '&lt;')}</div>`; el.appendChild(lb);
         }
         this.floor.appendChild(el);
         this.objs[it.id] = { el, it, info };

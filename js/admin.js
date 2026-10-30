@@ -8,7 +8,7 @@
   const STATUS = { awaiting_payment: 'Ожидает оплаты', receipt_sent: 'Чек отправлен', pending_review: 'Ожидает проверки', payment_verified: 'Оплата проверена', confirmed: 'Подтверждено', rejected: 'Отклонено', cancelled: 'Отменено', expired: 'Время истекло' };
   const PAY = { unpaid: 'Не оплачено', claimed: 'Клиент сообщил об оплате', verified: 'Оплата проверена', onsite: 'Оплата на месте' };
   const KINDS = { pc: 'Компьютер', ps: 'PlayStation', wheel: 'Руль', vr: 'VR', tennis: 'Настольный теннис', airhockey: 'Аэрохоккей', foosball: 'Настольный футбол', tv: 'Телевизор', room: 'Вся комната', other: 'Другое' };
-  const NAV = [['/admin', '📊', 'Главная'], ['/admin/bookings', '🧾', 'Брони'], ['/admin/calendar', '🗓️', 'Календарь'], ['/admin/equipment', '🖥️', 'Оборудование'], ['/admin/prices', '💰', 'Цены'], ['/admin/promos', '🎁', 'Акции'], ['/admin/settings', '⚙️', 'Настройки']];
+  const NAV = [['/admin', '📊', 'Главная'], ['/admin/bookings', '🧾', 'Брони'], ['/admin/calendar', '🗓️', 'Календарь'], ['/admin/equipment', '🖥️', 'Оборудование'], ['/admin/prices', '💰', 'Тарифы'], ['/admin/promos', '🎁', 'Акции'], ['/admin/settings', '⚙️', 'Настройки']];
 
   // ---------- API ----------
   async function api(fn, p = {}) {
@@ -358,60 +358,176 @@
   }
 
   // ================= ОБОРУДОВАНИЕ =================
+  const MODELS_RU = { pc: 'Игровой компьютер', ps: 'PlayStation-зона', wheel: 'Гоночный симулятор', vr: 'VR-платформа', tennis: 'Стол для тенниса', airhockey: 'Аэрохоккей', foosball: 'Настольный футбол', tv: 'Телевизор', other: 'Универсальный объект' };
+  const STATUS_EQ = { ok: 'Работает', maintenance: 'Временно отключено', disabled: 'Отключено' };
+  let SHOW_ARCHIVE = false;
   async function equipment() {
-    await loadEq();
-    main().innerHTML = top('Оборудование', `<button class="btn btn-sm btn-neon" id="addEq">+ Добавить</button>`) + `<div id="eqL">${EQ.map(e => `
-      <div class="eq-card" data-eq="${e.id}"><div class="th">${e.photo_url ? `<img src="${esc(e.photo_url)}" alt="">` : `<div class="ph-art"><span>${(KINDS[e.kind] || '').slice(0, 4)}</span></div>`}</div>
-      <div><b>${esc(e.name)}</b> <span class="dim" style="font-size:12px">${KINDS[e.kind] || e.kind}</span><div class="muted" style="font-size:13px">${e.price_per_hour != null ? rub(e.price_per_hour) + ' / час' : 'цена не задана'} · ${!e.is_active ? 'скрыто' : e.status === 'ok' ? (e.bookable ? 'доступно' : 'без брони') : e.status === 'maintenance' ? 'на обслуживании' : 'отключено'}</div></div>
-      <span class="sb ${!e.is_active || e.status !== 'ok' ? 'cancelled' : 'confirmed'}">${!e.is_active ? 'Скрыто' : e.status === 'ok' ? 'Работает' : 'Недоступно'}</span></div>`).join('')}</div>`;
-    $$('[data-eq]').forEach(x => x.onclick = () => eqForm(EQ.find(e => e.id === x.dataset.eq)));
-    $('#addEq').onclick = () => eqForm({ id: '', name: '', kind: 'other', description: '', features: [], price_per_hour: null, max_players: null, bookable: true, is_active: true, status: 'ok', map_x: 500, map_y: 400, map_rot: 0, sort: 100 });
+    await loadEq(); try { await loadSettings(); } catch (x) {}
+    const list = EQ.filter(e => SHOW_ARCHIVE || e.is_active);
+    const archived = EQ.filter(e => !e.is_active).length;
+    main().innerHTML = top('Оборудование') + `
+      <button class="btn btn-neon btn-wide" id="addEq" style="margin-bottom:16px;min-height:58px">+ Добавить оборудование</button>
+      <div class="eq-grid">${list.map(e => eqCard(e)).join('')}</div>
+      ${archived ? `<label class="tgl" style="margin-top:16px"><input type="checkbox" id="arch" ${SHOW_ARCHIVE ? 'checked' : ''}> Показать архив (${archived})</label>` : ''}`;
+    $('#addEq').onclick = () => eqForm(newEqTemplate());
+    const a = $('#arch'); if (a) a.onchange = () => { SHOW_ARCHIVE = a.checked; equipment(); };
+    $$('[data-eq-edit]').forEach(x => x.onclick = () => eqForm(EQ.find(e => e.id === x.dataset.eqEdit)));
+    $$('[data-eq-toggle]').forEach(x => x.onclick = () => toggleEq(EQ.find(e => e.id === x.dataset.eqToggle)));
+    $$('[data-eq-del]').forEach(x => x.onclick = () => deleteEq(EQ.find(e => e.id === x.dataset.eqDel)));
+    // фото, загруженные админом
+    list.filter(e => e.has_photo).forEach(async e => { try { const r = await CZ.rpc('get_equipment_photo', { id: e.id }); const th = $(`[data-th="${e.id}"]`); if (r && th) th.innerHTML = `<img src="${r.src}" alt="">`; } catch (x) {} });
   }
-  function eqForm(e) {
-    const isNew = !e.id;
-    const c = modal(`<h2>${isNew ? 'Новое оборудование' : esc(e.name)}</h2><div class="fgrid">
-      <div class="fld"><label>Название</label><input class="inp" id="qN" value="${esc(e.name)}"></div>
-      <div class="fld"><label>Тип</label><select class="inp" id="qK" ${e.kind === 'room' ? 'disabled' : ''}>${Object.entries(KINDS).filter(([k]) => k !== 'room' || e.kind === 'room').map(([k, v]) => `<option value="${k}" ${k === e.kind ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-      ${isNew ? `<div class="fld"><label>Код (латиница, напр. pc06)</label><input class="inp" id="qId" placeholder="авто"></div>` : ''}
-      <div class="fld"><label>Цена за час, ₽ (пусто — не задана)</label><input class="inp" type="number" min="0" id="qP" value="${e.price_per_hour ?? ''}"></div>
-      <div class="fld"><label>Макс. игроков</label><input class="inp" type="number" min="1" id="qM" value="${e.max_players ?? ''}"></div>
-      <div class="fld full"><label>Описание</label><textarea class="inp" id="qD">${esc(e.description)}</textarea></div>
-      <div class="fld full"><label>Особенности (через запятую)</label><input class="inp" id="qF" value="${esc((e.features || []).join(', '))}"></div>
-      <div class="fld"><label>Состояние</label><select class="inp" id="qS"><option value="ok" ${e.status === 'ok' ? 'selected' : ''}>Работает</option><option value="maintenance" ${e.status === 'maintenance' ? 'selected' : ''}>Временно неисправно / обслуживание</option><option value="disabled" ${e.status === 'disabled' ? 'selected' : ''}>Отключено</option></select></div>
-      <div class="fld"><label>Комментарий к состоянию</label><input class="inp" id="qSN" value="${esc(e.status_note || '')}"></div>
-      <label class="tgl"><input type="checkbox" id="qB" ${e.bookable ? 'checked' : ''}> Можно бронировать</label>
-      <label class="tgl"><input type="checkbox" id="qA" ${e.is_active ? 'checked' : ''}> Показывать на сайте</label>
-      <div class="fld"><label>Порядок</label><input class="inp" type="number" id="qO" value="${e.sort ?? 100}"></div>
-      <div class="fld"><label>Поворот на схеме, °</label><input class="inp" type="number" step="15" id="qR" value="${e.map_rot || 0}"></div>
-      ${e.kind !== 'room' ? `<div class="fld full"><label>Расположение на 3D-схеме — перетащите метку</label><div class="plan" id="plan"></div></div>` : ''}
-      <div class="fld full"><label>Фото</label><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><label class="btn btn-sm">📷 Загрузить фото<input type="file" accept="image/*" id="qPh" hidden></label>${e.has_photo ? '<button class="btn btn-sm btn-bad" id="qPhDel">Удалить загруженное фото</button>' : ''}<span class="dim" style="font-size:12px" id="qPhS">${e.has_photo ? 'Загружено своё фото' : e.photo_url ? 'Используется фото клуба' : 'Фото нет'}</span></div></div>
-      </div><p class="form-err" id="qE"></p>
-      <button class="btn btn-neon btn-wide" id="qSave">Сохранить</button>
-      ${!isNew && e.kind !== 'room' ? '<button class="btn btn-bad btn-wide" id="qDel" style="margin-top:8px">Удалить оборудование</button>' : ''}`);
-    let mx = +e.map_x, my = +e.map_y;
+  function eqCard(e) {
+    const off = e.status !== 'ok';
+    const thumb = e.photo_url ? `<img src="${esc(e.photo_url)}" alt="">` : `<div class="ph-art"><span>${esc((e.label || e.name).slice(0, 6))}</span></div>`;
+    return `<div class="eq-tile ${!e.is_active ? 'archived' : ''}">
+      <div class="eq-th" data-th="${e.id}">${thumb}</div>
+      <div class="eq-body">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div><b style="font-size:17px">${esc(e.name)}</b><div class="dim" style="font-size:12px">${KINDS[e.kind] || e.kind} · № ${esc(e.id)}</div></div>
+          <span class="sb ${!e.is_active ? 'cancelled' : off ? 'rejected' : 'confirmed'}">${!e.is_active ? 'В архиве' : STATUS_EQ[e.status]}</span></div>
+        <div class="eq-meta"><span>💰 ${e.price_per_hour != null ? rub(e.price_per_hour) + '/ч' : 'цена не задана'}</span><span>🧾 броней: <b>${e.bookings_count || 0}</b>${e.future_count ? ` (впереди ${e.future_count})` : ''}</span>${!e.bookable && e.kind !== 'tv' ? '<span>🔒 без онлайн-брони</span>' : ''}${e.schedule ? '<span>🕘 своё расписание</span>' : ''}</div>
+        ${off && e.status_note ? `<div class="dim" style="font-size:13px">Причина: ${esc(e.status_note)}</div>` : ''}
+        <div class="eq-acts">
+          <button class="btn btn-sm" data-eq-edit="${e.id}">✏️ Редактировать</button>
+          ${e.kind !== 'room' || true ? `<button class="btn btn-sm ${off ? 'btn-ok' : ''}" data-eq-toggle="${e.id}">${off ? '✅ Включить' : '⏸ Временно отключить'}</button>` : ''}
+          ${e.kind !== 'room' ? `<button class="btn btn-sm btn-bad" data-eq-del="${e.id}">🗑 Удалить</button>` : ''}
+        </div>
+      </div></div>`;
+  }
+  async function toggleEq(e) {
+    const off = e.status !== 'ok';
+    try {
+      if (off) { await api('admin_equipment_status', { id: e.id, status: 'ok' }); toast(`${e.name} снова доступно для брони`, 'ok'); return equipment(); }
+      modal(`<h2>Временно отключить «${esc(e.name)}»?</h2><p class="muted">Клиенты не смогут его бронировать, на сайте и на 3D-схеме оно станет серым. История и уже оформленные брони сохранятся.</p>
+        ${e.future_count ? `<div class="note">Впереди есть брони: ${e.future_count}. Они останутся в силе — при необходимости перенесите их на другое устройство в разделе «Брони».</div>` : ''}
+        <div class="fld"><label>Причина (видна клиентам)</label><input class="inp" id="offN" placeholder="Например: техническое обслуживание"></div>
+        <button class="btn btn-bad btn-wide" id="offOk" style="margin-top:14px">Временно отключить</button>`, c => {
+        $('#offOk', c).onclick = async () => { try { await api('admin_equipment_status', { id: e.id, status: 'maintenance', note: $('#offN', c).value || 'Временно недоступно' }); toast(`${e.name} отключено`, 'ok'); closeModal(); equipment(); } catch (er) { toast(er.message, 'err'); } };
+      });
+    } catch (er) { toast(er.message, 'err'); }
+  }
+  function deleteEq(e) {
+    modal(`<h2>Удалить «${esc(e.name)}»?</h2>
+      ${e.future_count ? `<div class="note">У оборудования есть будущие брони (${e.future_count}). Удалить его нельзя, пока вы не перенесёте или не отмените их. Если оно сломалось — используйте «Временно отключить».</div>`
+        : e.bookings_count ? `<p class="muted">По этому оборудованию были брони (${e.bookings_count}). Чтобы не потерять историю и выручку, оно будет перенесено в архив: исчезнет с сайта и из бронирования, а история сохранится.</p>`
+        : `<p class="muted">Броней по этому оборудованию не было — оно будет удалено полностью.</p>`}
+      ${e.future_count ? '' : `<button class="btn btn-bad btn-wide" id="delOk">${e.bookings_count ? 'Перенести в архив' : 'Удалить навсегда'}</button>`}`, c => {
+      const b = $('#delOk', c); if (b) b.onclick = async () => { try { const r = await api('admin_equipment_delete', { id: e.id }); toast(r.hidden ? 'Оборудование в архиве, история сохранена' : 'Оборудование удалено', 'ok'); closeModal(); equipment(); } catch (er) { toast(er.message, 'err'); } };
+    });
+  }
+  function slugify(name) {
+    const tr = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sh', ы: 'y', э: 'e', ю: 'yu', я: 'ya' };
+    return String(name || '').toLowerCase().split('').map(c => tr[c] ?? c).join('').replace(/[^a-z0-9]+/g, '').slice(0, 20);
+  }
+  // свободное место на схеме: ПК — рядом с остальными компьютерами, остальное — в любом свободном месте
+  function suggestSpot(kind, selfId) {
+    const others = EQ.filter(x => x.id !== selfId && x.kind !== 'room' && x.is_active).map(x => [+x.map_x, +x.map_y]).concat([[655, 335]]);
+    const free = ([x, y], d) => others.every(([a, b]) => Math.hypot(a - x, b - y) >= d);
+    const pcSpots = []; for (let x = 560; x <= 920; x += 90) pcSpots.push([x, 95]); for (let x = 920; x >= 380; x -= 90) pcSpots.push([x, 215]); for (let x = 470; x >= 290; x -= 90) pcSpots.push([x, 95]);
+    if (kind === 'pc') { const s = pcSpots.find(p => free(p, 80)); if (s) return s; }
+    for (let y = 120; y <= 620; y += 50) for (let x = 100; x <= 920; x += 50) if (free([x, y], 130)) return [x, y];
+    return [500, 420];
+  }
+  function newEqTemplate() {
+    const n = EQ.filter(e => e.kind === 'pc').length + 1; const pc0 = EQ.find(e => e.kind === 'pc') || {};
+    const [x, y] = suggestSpot('pc');
+    return { id: '', is_new: true, name: `PC ${String(n).padStart(2, '0')}`, kind: 'pc', description: pc0.description || '', features: pc0.features || [], price_per_hour: pc0.price_per_hour ?? 150, max_players: 1,
+      bookable: true, is_active: true, status: 'ok', map_x: x, map_y: y, map_rot: 0, map_scale: 1, model: '', label: '', schedule: null, photo_url: pc0.photo_url || '', sort: Math.max(0, ...EQ.filter(e => e.kind === 'pc').map(e => e.sort || 0)) + 1 };
+  }
+  function eqForm(e0) {
+    const e = Object.assign({}, e0); const isNew = !!e.is_new || !e.id;
+    let sched = e.schedule ? JSON.parse(JSON.stringify(e.schedule)) : null;
+    let photo = null; // {mime,data,preview}
+    const club = (SETTINGS && SETTINGS.settings && SETTINGS.settings.work_hours) || null;
+    const schedRows = s => [1, 2, 3, 4, 5, 6, 7].map(d => { const x = (s && s.days && s.days[d]) || { open: '10:00', close: '02:00' }; return `<tr><td><b>${DN[d]}</b></td><td><input class="inp" type="time" data-so="${d}" value="${x.open}"></td><td><input class="inp" type="time" data-sc="${d}" value="${x.close}"></td><td><input type="checkbox" data-sx="${d}" ${x.closed ? 'checked' : ''} style="width:22px;height:22px"></td></tr>`; }).join('');
+    const c = modal(`<h2>${isNew ? 'Новое оборудование' : 'Редактировать: ' + esc(e.name)}</h2>
+      <div class="fgrid">
+        <div class="fld"><label>Название</label><input class="inp" id="qN" value="${esc(e.name)}" maxlength="40"></div>
+        <div class="fld"><label>Категория</label><select class="inp" id="qK" ${e.kind === 'room' ? 'disabled' : ''}>${Object.entries(KINDS).filter(([k]) => k !== 'room' || e.kind === 'room').map(([k, v]) => `<option value="${k}" ${k === e.kind ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        <div class="fld"><label>Номер устройства (латиница/цифры)</label><input class="inp" id="qId" value="${esc(e.id)}" ${isNew ? '' : 'disabled'} placeholder="pc06"><small class="dim" style="font-size:11px">${isNew ? 'Заполнится сам из названия' : 'Номер не меняется — по нему хранится история'}</small></div>
+        <div class="fld"><label>Стоимость за час, ₽</label><input class="inp" type="number" min="0" inputmode="numeric" id="qP" value="${e.price_per_hour ?? ''}" placeholder="пусто — «Цена скоро»"></div>
+        <div class="fld full"><label>Описание</label><textarea class="inp" id="qD">${esc(e.description || '')}</textarea></div>
+        <div class="fld full"><label>Особенности (через запятую)</label><input class="inp" id="qF" value="${esc((e.features || []).join(', '))}"></div>
+        <div class="fld"><label>Макс. игроков</label><input class="inp" type="number" min="1" id="qM" value="${e.max_players ?? ''}"></div>
+        <div class="fld"><label>Статус</label><select class="inp" id="qS">${Object.entries(STATUS_EQ).map(([k, v]) => `<option value="${k}" ${k === e.status ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        <div class="fld full" id="qSNw" ${e.status === 'ok' ? 'hidden' : ''}><label>Причина отключения (видна клиентам)</label><input class="inp" id="qSN" value="${esc(e.status_note || '')}"></div>
+        <label class="tgl"><input type="checkbox" id="qB" ${e.bookable ? 'checked' : ''}> Можно бронировать онлайн</label>
+        <label class="tgl"><input type="checkbox" id="qA" ${e.is_active ? 'checked' : ''}> Показывать на сайте</label>
+
+        <div class="fld full"><label>Фотография</label>
+          <div class="ph-edit"><div class="ph-prev" id="phPrev">${e.photo_url ? `<img src="${esc(e.photo_url)}" alt="">` : '<span class="dim">Нет фото</span>'}</div>
+          <div class="stack" style="gap:8px"><label class="btn btn-sm">📷 Выбрать из галереи<input type="file" accept="image/*" id="qPh" hidden></label>
+          ${e.has_photo ? '<button class="btn btn-sm btn-bad" id="qPhDel" type="button">Убрать своё фото</button>' : ''}<span class="dim" style="font-size:12px" id="qPhS">${e.has_photo ? 'Загружено своё фото' : e.photo_url ? 'Фото клуба' : ''}</span></div></div></div>
+
+        <div class="fld full"><label>Расписание</label>
+          <label class="check" style="margin:4px 0"><input type="radio" name="sm" value="club" ${!sched ? 'checked' : ''}> Как у клуба${club && club.always_open !== false ? ' (круглосуточно)' : ''}</label>
+          <label class="check" style="margin:4px 0"><input type="radio" name="sm" value="own" ${sched ? 'checked' : ''}> Своё расписание для этого устройства</label>
+          <table class="mini-table" id="schT" ${sched ? '' : 'hidden'}><thead><tr><th>День</th><th>С</th><th>До</th><th>Выходной</th></tr></thead><tbody>${schedRows(sched)}</tbody></table></div>
+
+        ${e.kind !== 'room' ? `<div class="fld full"><label>Место на 3D-схеме</label>
+          <div class="r3-prev" id="r3prev"></div>
+          <div class="plan" id="plan" style="margin-top:8px"></div>
+          <p class="dim" style="font-size:12px;margin:6px 0">Перетащите свою метку (подсвечена) на плане — 3D-превью обновится сразу.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm" type="button" id="autoSpot">📍 Найти свободное место${e.kind === 'pc' ? ' рядом с ПК' : ''}</button></div></div>
+        <div class="fld"><label>Подпись на схеме</label><input class="inp" id="qL" value="${esc(e.label || '')}" placeholder="как название" maxlength="24"></div>
+        <div class="fld"><label>3D-модель</label><select class="inp" id="qMod"><option value="">По категории</option>${Object.entries(MODELS_RU).map(([k, v]) => `<option value="${k}" ${e.model === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        <div class="fld"><label>Размер: <b id="scV">${Math.round((+e.map_scale || 1) * 100)}%</b></label><input type="range" min="50" max="200" step="10" id="qSc" value="${Math.round((+e.map_scale || 1) * 100)}" style="width:100%"></div>
+        <div class="fld"><label>Поворот</label><select class="inp" id="qR">${[0, 45, 90, 135, 180, 225, 270, 315].map(r => `<option value="${r}" ${(+e.map_rot || 0) === r ? 'selected' : ''}>${r}°</option>`).join('')}</select></div>` : ''}
+        <div class="fld"><label>Порядок отображения</label><input class="inp" type="number" id="qO" value="${e.sort ?? 100}"></div>
+      </div>
+      <p class="form-err" id="qE"></p>
+      <button class="btn btn-neon btn-wide" id="qSave" style="min-height:56px">💾 Сохранить</button>`);
+
+    // поля → объект
+    const st = () => ({ name: $('#qN', c).value.trim(), kind: e.kind === 'room' ? 'room' : $('#qK', c).value, label: ($('#qL', c) || {}).value || '', model: ($('#qMod', c) || {}).value || '',
+      map_scale: ($('#qSc', c) ? +$('#qSc', c).value / 100 : 1), map_rot: ($('#qR', c) ? +$('#qR', c).value : 0), map_x: e.map_x, map_y: e.map_y });
+    // автономер из названия
+    if (isNew) { const idI = $('#qId', c); let touched = false; idI.oninput = () => touched = true; $('#qN', c).addEventListener('input', () => { if (!touched) idI.value = slugify($('#qN', c).value); }); if (!idI.value) idI.value = slugify(e.name); }
+    $('#qS', c).onchange = () => $('#qSNw', c).hidden = $('#qS', c).value === 'ok';
+    $$('[name=sm]', c).forEach(r => r.onchange = () => { $('#schT', c).hidden = $('[name=sm]:checked', c).value !== 'own'; });
+    // фото
+    $('#qPh', c).onchange = async () => { const f = $('#qPh', c).files[0]; if (!f) return; try { photo = await CZ.fileToPayload(f, 1400, .82); $('#phPrev', c).innerHTML = `<img src="${photo.preview}" alt="">`; $('#qPhS', c).textContent = 'Новое фото — сохранится вместе с карточкой'; } catch (er) { toast(er.message, 'err'); } };
+    const pd = $('#qPhDel', c); if (pd) pd.onclick = async () => { await api('admin_equipment_photo', { id: e.id, data: '' }); toast('Своё фото убрано', 'ok'); e.has_photo = false; pd.remove(); $('#qPhS', c).textContent = e.photo_url ? 'Фото клуба' : ''; };
+    if (e.has_photo) CZ.rpc('get_equipment_photo', { id: e.id }).then(r => { if (r && r.src) $('#phPrev', c).innerHTML = `<img src="${r.src}" alt="">`; }).catch(() => {});
+
+    // план и 3D-превью
     const plan = $('#plan', c);
-    if (plan) {
-      const draw = () => { plan.innerHTML = EQ.filter(x => x.id !== e.id && x.kind !== 'room').map(x => `<div class="dot" style="left:${x.map_x / 10}%;top:${x.map_y / 7}%">${esc(x.name)}</div>`).join('') + `<div class="dot me" id="me" style="left:${mx / 10}%;top:${my / 7}%">${esc($('#qN', c).value || 'Новое')}</div>`; };
-      draw();
-      let drag = false;
-      plan.addEventListener('pointerdown', ev => { if (ev.target.id === 'me') { drag = true; plan.setPointerCapture(ev.pointerId); } });
-      plan.addEventListener('pointermove', ev => { if (!drag) return; const r = plan.getBoundingClientRect(); mx = Math.round(Math.max(40, Math.min(960, (ev.clientX - r.left) / r.width * 1000))); my = Math.round(Math.max(40, Math.min(660, (ev.clientY - r.top) / r.height * 700))); const me = $('#me', plan); me.style.left = mx / 10 + '%'; me.style.top = my / 7 + '%'; });
-      plan.addEventListener('pointerup', () => drag = false);
-    }
-    $('#qSave', c).onclick = async () => {
-      try {
-        const item = { id: isNew ? ($('#qId', c).value || '') : e.id, name: $('#qN', c).value, kind: $('#qK', c).value, description: $('#qD', c).value, features: $('#qF', c).value.split(',').map(s => s.trim()).filter(Boolean),
-          price_per_hour: $('#qP', c).value, max_players: $('#qM', c).value, status: $('#qS', c).value, status_note: $('#qSN', c).value, bookable: $('#qB', c).checked, is_active: $('#qA', c).checked,
-          sort: $('#qO', c).value, map_x: mx, map_y: my, map_rot: $('#qR', c).value, photo_url: e.photo_url || '', link_to: e.link_to || '' };
-        const saved = await api('admin_equipment_save', { item });
-        const f = $('#qPh', c).files[0];
-        if (f) { const p = await CZ.fileToPayload(f, 1400, .82); await api('admin_equipment_photo', { id: saved.id, mime: p.mime, data: p.data }); }
-        toast('Сохранено — изменения уже на сайте', 'ok'); closeModal(); equipment();
-      } catch (er) { $('#qE', c).textContent = er.message; }
+    let prev = null;
+    const previewItems = () => { const s = st(); const me = Object.assign({}, e, s, { id: e.id || '__new', name: s.name || 'Новое' }); return EQ.filter(x => x.is_active && x.id !== e.id).concat([me]); };
+    const refresh = () => {
+      if (!plan) return; const s = st();
+      plan.innerHTML = EQ.filter(x => x.id !== e.id && x.kind !== 'room' && x.is_active).map(x => `<div class="dot" style="left:${x.map_x / 10}%;top:${x.map_y / 7}%">${esc(x.label || x.name)}</div>`).join('') +
+        `<div class="dot me" id="me" style="left:${e.map_x / 10}%;top:${e.map_y / 7}%">${esc(s.label || s.name || 'Новое')}</div>`;
+      if (prev) { prev.setItems(previewItems()); prev.focus(e.id || '__new', true); }
     };
-    const ph = $('#qPh', c); ph.onchange = () => { $('#qPhS', c).textContent = ph.files[0] ? 'Выбрано: ' + ph.files[0].name + ' (загрузится при сохранении)' : ''; };
-    const pd = $('#qPhDel', c); if (pd) pd.onclick = async () => { await api('admin_equipment_photo', { id: e.id, data: '' }); toast('Фото удалено', 'ok'); closeModal(); equipment(); };
-    const del = $('#qDel', c); if (del) del.onclick = async () => { if (!confirm(`Удалить «${e.name}»? Если по нему были брони, оно будет скрыто, а история сохранится.`)) return; try { const r = await api('admin_equipment_delete', { id: e.id }); toast(r.hidden ? 'Оборудование скрыто (есть история броней)' : 'Удалено', 'ok'); closeModal(); equipment(); } catch (er) { toast(er.message, 'err'); } };
+    if (plan && window.Room3D) { try { prev = new Room3D($('#r3prev', c), { interactive: false }); } catch (x) { prev = null; } }
+    refresh();
+    let rT; const soft = () => { clearTimeout(rT); rT = setTimeout(refresh, 250); };
+    ['#qN', '#qL', '#qMod', '#qSc', '#qR', '#qK'].forEach(s => { const el = $(s, c); if (el) el.addEventListener('input', () => { if (s === '#qSc') $('#scV', c).textContent = el.value + '%'; soft(); }); });
+    if (plan) {
+      let drag = false;
+      const moveTo = ev => { const r = plan.getBoundingClientRect(); e.map_x = Math.round(Math.max(40, Math.min(960, (ev.clientX - r.left) / r.width * 1000))); e.map_y = Math.round(Math.max(40, Math.min(660, (ev.clientY - r.top) / r.height * 700))); const me = $('#me', plan); me.style.left = e.map_x / 10 + '%'; me.style.top = e.map_y / 7 + '%'; };
+      plan.addEventListener('pointerdown', ev => { drag = true; plan.setPointerCapture(ev.pointerId); moveTo(ev); });
+      plan.addEventListener('pointermove', ev => { if (drag) moveTo(ev); });
+      plan.addEventListener('pointerup', () => { if (drag) { drag = false; refresh(); } });
+      $('#autoSpot', c).onclick = () => { const [x, y] = suggestSpot($('#qK', c).value, e.id); e.map_x = x; e.map_y = y; refresh(); toast('Место выбрано — можно подвинуть'); };
+    }
+
+    $('#qSave', c).onclick = async () => {
+      const btn = $('#qSave', c); btn.disabled = true; $('#qE', c).textContent = '';
+      try {
+        const s = st(); if (!s.name) throw new Error('Введите название');
+        let schedule = null;
+        if (($('[name=sm]:checked', c) || {}).value === 'own') { schedule = { always_open: false, days: {} }; [1, 2, 3, 4, 5, 6, 7].forEach(d => schedule.days[d] = { open: $(`[data-so="${d}"]`, c).value || '10:00', close: $(`[data-sc="${d}"]`, c).value || '02:00', closed: $(`[data-sx="${d}"]`, c).checked }); }
+        const item = { id: isNew ? (slugify($('#qId', c).value) || slugify(s.name)) : e.id, is_new: isNew, name: s.name, kind: s.kind, description: $('#qD', c).value, features: $('#qF', c).value.split(',').map(x => x.trim()).filter(Boolean),
+          price_per_hour: $('#qP', c).value, max_players: $('#qM', c).value, status: $('#qS', c).value, status_note: $('#qSN', c).value, bookable: $('#qB', c).checked, is_active: $('#qA', c).checked,
+          sort: $('#qO', c).value, map_x: e.map_x, map_y: e.map_y, map_rot: s.map_rot, map_scale: s.map_scale, model: s.model, label: s.label, schedule,
+          photo_url: e.photo_url || (s.kind === 'pc' ? '/img/pcs.webp' : ''), link_to: e.link_to || '' };
+        const saved = await api('admin_equipment_save', { item });
+        if (photo) await api('admin_equipment_photo', { id: saved.id, mime: photo.mime, data: photo.data });
+        toast(isNew ? `${saved.name} добавлено — уже на сайте и на 3D-схеме` : 'Сохранено — изменения уже на сайте', 'ok'); closeModal(); equipment();
+      } catch (er) { $('#qE', c).textContent = er.message; btn.disabled = false; }
+    };
   }
 
   // ================= ЦЕНЫ =================
@@ -420,7 +536,7 @@
   async function prices() {
     await loadEq(); const S = await loadSettings(); const s = S.settings;
     const night = s.night || {}, room = s.room || {};
-    main().innerHTML = top('Цены и тарифы') + `
+    main().innerHTML = top('Тарифы и цены') + `
       <div class="box"><h2>💰 Цены оборудования, ₽ / час</h2><table class="mini-table"><tbody>${EQ.filter(e => e.kind !== 'tv').map(e => `<tr><td><b>${esc(e.name)}</b></td><td style="width:150px"><input class="inp" type="number" min="0" data-price="${e.id}" value="${e.price_per_hour ?? ''}" placeholder="не задана"></td></tr>`).join('')}</tbody></table>
         <p class="dim" style="font-size:12px">Пустое поле — «Цена скоро», онлайн-бронь для этого оборудования закрыта. Новая цена действует только для новых броней.</p>
         <button class="btn btn-neon" id="svP">Сохранить цены</button></div>
@@ -524,7 +640,7 @@
     const wh = s.work_hours || { always_open: true, days: {} }; const cd = s.custom_duration || {}; const pay = s.payment || {}; const ct = s.contacts || {}; const tg = s.telegram || {};
     const durs = s.durations || [];
     main().innerHTML = top('Настройки') + `
-      <div class="box" style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-sm" href="/admin/prices" data-r>💰 Цены и тарифы</a><a class="btn btn-sm" href="/admin/promos" data-r>🎁 Акции</a><a class="btn btn-sm" href="/admin/equipment" data-r>🖥️ Оборудование</a><a class="btn btn-sm" href="/" target="_blank">🌐 Сайт</a><button class="btn btn-sm btn-bad" id="lo2">🚪 Выйти</button></div>
+      <div class="box" style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-sm" href="/admin/prices" data-r>💰 Тарифы</a><a class="btn btn-sm" href="/admin/promos" data-r>🎁 Акции</a><a class="btn btn-sm" href="/admin/equipment" data-r>🖥️ Оборудование</a><a class="btn btn-sm" href="/" target="_blank">🌐 Сайт</a><button class="btn btn-sm btn-bad" id="lo2">🚪 Выйти</button></div>
       <div class="box"><h2>🕘 Рабочее время</h2>
         <label class="tgl"><input type="checkbox" id="wA" ${wh.always_open !== false ? 'checked' : ''}> Работаем круглосуточно</label>
         <table class="mini-table" id="wT" style="margin-top:10px;${wh.always_open !== false ? 'opacity:.4' : ''}"><thead><tr><th>День</th><th>Открытие</th><th>Закрытие</th><th>Выходной</th></tr></thead><tbody>

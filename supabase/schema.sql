@@ -39,6 +39,12 @@ create table if not exists equipment (
   updated_at timestamptz not null default now()
 );
 
+-- Доп. поля оборудования (размер и вид на 3D-схеме, подпись, своё расписание)
+alter table equipment add column if not exists map_scale numeric not null default 1;
+alter table equipment add column if not exists model text;
+alter table equipment add column if not exists label text;
+alter table equipment add column if not exists schedule jsonb;
+
 create table if not exists equipment_photos (
   equipment_id text primary key references equipment(id) on delete cascade,
   mime text not null,

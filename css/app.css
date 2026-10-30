@@ -170,7 +170,7 @@ section{position:relative}
 @keyframes selpulse{50%{box-shadow:0 0 50px var(--sel),inset 0 0 40px var(--sel)}}
 .r3-obj.selected .glowy{box-shadow:0 0 30px var(--cyan),inset 0 0 20px rgba(34,227,255,.6)!important}
 .r3-label{position:absolute;left:0;top:0;transform-style:preserve-3d;pointer-events:none;transition:opacity .4s}
-.r3-label>div{transform:translate(-50%,-100%) rotateZ(calc(var(--rz) * -1)) rotateX(calc(var(--rx) * -1));transform-origin:50% 100%;white-space:nowrap;font-family:var(--f-display);font-size:13px;font-weight:700;letter-spacing:.06em;padding:6px 10px;border-radius:9px;background:rgba(6,8,26,.82);border:1px solid var(--st,var(--ok));box-shadow:0 0 14px color-mix(in srgb,var(--st,var(--ok)) 70%,transparent);display:flex;align-items:center;gap:7px}
+.r3-label>div{transform:translate(-50%,-100%) rotateZ(calc(var(--rz) * -1 - var(--or, 0deg))) rotateX(calc(var(--rx) * -1));transform-origin:50% 100%;white-space:nowrap;font-family:var(--f-display);font-size:13px;font-weight:700;letter-spacing:.06em;padding:6px 10px;border-radius:9px;background:rgba(6,8,26,.82);border:1px solid var(--st,var(--ok));box-shadow:0 0 14px color-mix(in srgb,var(--st,var(--ok)) 70%,transparent);display:flex;align-items:center;gap:7px}
 .r3-label>div::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--st,var(--ok));box-shadow:0 0 8px var(--st,var(--ok))}
 .r3-obj[data-st=busy] .r3-label>div,.r3-obj[data-st=off] .r3-label>div{color:#cfd3e6}
 .screen{background:linear-gradient(135deg,#1b6dff,#22e3ff 40%,#8b5cff 70%,#ff3fb4);background-size:300% 300%;animation:screenflow 7s ease infinite;box-shadow:0 0 22px rgba(34,227,255,.6)}

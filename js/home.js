@@ -212,8 +212,9 @@
 
   // расписание работы (повторяет серверную проверку)
   function tm(s) { const [h, m] = String(s).split(':').map(Number); return h * 60 + (m || 0); }
-  function isOpen(d) {
-    const wh = DATA.settings.work_hours; if (!wh || wh.always_open !== false && wh.always_open !== 'false') return true;
+  function isOpen(d, it) { return openBy(DATA.settings.work_hours, d) && (!it || !it.schedule || openBy(it.schedule, d)); }
+  function openBy(wh, d) {
+    if (!wh || wh.always_open !== false && wh.always_open !== 'false') return true;
     const p = CZ.parts(d); const t = p.h * 60 + p.mi; const map = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 }; const dw = map[p.wd]; const pd = dw === 1 ? 7 : dw - 1;
     const today = wh.days[dw], prev = wh.days[pd];
     if (today && !today.closed) { const o = tm(today.open), c = tm(today.close); if (o < c && t >= o && t < c) return true; if (o >= c && t >= o) return true; }
@@ -235,7 +236,7 @@
     for (let m = 0; m < 24 * 60; m += 30) {
       const t = CZ.zoned(S.date, CZ.pad(Math.floor(m / 60)) + ':' + CZ.pad(m % 60)); const a = t.getTime(), b = a + occ;
       const past = a < now - 5 * 60000;
-      let ok = !past; if (ok) for (let k = 0; k < S.dur; k += 30) if (!isOpen(new Date(a + k * 60000))) { ok = false; break; }
+      let ok = !past; if (ok) for (let k = 0; k < S.dur; k += 30) if (!isOpen(new Date(a + k * 60000), it)) { ok = false; break; }
       const clash = ok && S.busy.some(([x, y]) => a < y && b > x);
       if (past) continue;
       const lbl = CZ.localTime(t);

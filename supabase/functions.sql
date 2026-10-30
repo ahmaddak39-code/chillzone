@@ -79,10 +79,10 @@ begin
   end loop;
 end $$;
 
--- Открыт ли клуб в этот момент (по расписанию)
-create or replace function _is_open(ts timestamptz) returns boolean
+-- Открыто ли в этот момент по расписанию wh (общему клуба или своему у устройства)
+create or replace function _open_by(wh jsonb, ts timestamptz) returns boolean
 language plpgsql stable security definer set search_path = public, extensions, pg_temp as $$
-declare wh jsonb := _setting('work_hours'); lt timestamp := _local(ts); t time := lt::time;
+declare lt timestamp := _local(ts); t time := lt::time;
   d int := extract(isodow from lt)::int; pd int; today jsonb; prev jsonb; o time; c time;
 begin
   if wh is null or coalesce((wh->>'always_open')::boolean, true) then return true; end if;
@@ -99,6 +99,10 @@ begin
   end if;
   return false;
 end $$;
+
+create or replace function _is_open(ts timestamptz) returns boolean
+language sql stable security definer set search_path = public, extensions, pg_temp as
+$$ select _open_by(_setting('work_hours'), ts) $$;
 
 create or replace function _in_window(t time, f time, tt time) returns boolean language sql immutable as $$
   select case when f is null or tt is null then true
@@ -219,6 +223,7 @@ begin
     if not e.bookable or not e.is_active or e.status <> 'ok' then raise exception 'EQUIPMENT_UNAVAILABLE'; end if;
     for i in 0..(paid_min/30)-1 loop
       if not _is_open(st + make_interval(mins => i*30)) then raise exception 'CLOSED_HOURS'; end if;
+      if e.schedule is not null and not _open_by(e.schedule, st + make_interval(mins => i*30)) then raise exception 'CLOSED_HOURS'; end if;
     end loop;
   end if;
 end $$;
@@ -275,6 +280,7 @@ begin
         'price_per_hour', e.price_per_hour, 'max_players', e.max_players, 'bookable', e.bookable,
         'status', e.status, 'status_note', e.status_note, 'photo_url', e.photo_url, 'has_photo', e.has_photo,
         'map_x', e.map_x, 'map_y', e.map_y, 'map_rot', e.map_rot, 'link_to', e.link_to, 'sort', e.sort,
+        'map_scale', e.map_scale, 'model', e.model, 'label', e.label, 'schedule', e.schedule,
         'busy_now', exists(select 1 from booking_slots s where s.active and s.period @> now()
                            and (s.resource = e.id or (e.kind = 'room' and s.resource <> 'room') or s.resource = 'room'))
       ) order by e.sort, e.id), '[]'::jsonb) from equipment e where e.is_active),
@@ -742,7 +748,10 @@ create or replace function admin_equipment_list(p jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
 begin
   perform _admin(p);
-  return (select coalesce(jsonb_agg(to_jsonb(e) order by e.sort, e.id), '[]'::jsonb) from equipment e);
+  return (select coalesce(jsonb_agg(to_jsonb(e) || jsonb_build_object(
+      'bookings_count', (select count(*) from bookings b where b.equipment_id = e.id and b.status not in ('rejected','cancelled','expired')),
+      'future_count', (select count(*) from bookings b where b.equipment_id = e.id and b.ends_at > now() and b.status not in ('rejected','cancelled','expired'))
+    ) order by e.sort, e.id), '[]'::jsonb) from equipment e);
 end $$;
 
 create or replace function admin_equipment_save(p jsonb) returns jsonb
@@ -753,19 +762,24 @@ begin
   nid := lower(regexp_replace(coalesce(it->>'id',''), '[^a-zA-Z0-9_-]', '', 'g'));
   if nid = '' then nid := 'eq' || lower(_rand_code(5)); end if;
   if coalesce(btrim(it->>'name'),'') = '' then raise exception 'BAD_NAME'; end if;
+  if coalesce((it->>'is_new')::boolean, false) and exists (select 1 from equipment where id = nid) then raise exception 'ID_EXISTS'; end if;
+  if coalesce(it->>'kind','other') = 'room' and nid <> 'room' then raise exception 'BAD_INPUT'; end if;
   insert into equipment(id, name, kind, description, features, price_per_hour, max_players, bookable, is_active, status, status_note,
-                        photo_url, map_x, map_y, map_rot, link_to, sort)
+                        photo_url, map_x, map_y, map_rot, link_to, sort, map_scale, model, label, schedule)
   values (nid, btrim(it->>'name'), coalesce(it->>'kind','other'), coalesce(it->>'description',''),
           coalesce(array(select jsonb_array_elements_text(coalesce(it->'features','[]'))), '{}'),
           nullif(it->>'price_per_hour','')::int, nullif(it->>'max_players','')::int, coalesce((it->>'bookable')::boolean, true),
           coalesce((it->>'is_active')::boolean, true), coalesce(it->>'status','ok'), it->>'status_note', nullif(it->>'photo_url',''),
           coalesce(nullif(it->>'map_x','')::numeric, 500), coalesce(nullif(it->>'map_y','')::numeric, 350), coalesce(nullif(it->>'map_rot','')::numeric, 0),
-          nullif(it->>'link_to',''), coalesce(nullif(it->>'sort','')::int, 100))
+          nullif(it->>'link_to',''), coalesce(nullif(it->>'sort','')::int, 100),
+          least(2.5, greatest(0.4, coalesce(nullif(it->>'map_scale','')::numeric, 1))), nullif(it->>'model',''), nullif(btrim(it->>'label'),''),
+          case when jsonb_typeof(it->'schedule') = 'object' then it->'schedule' else null end)
   on conflict (id) do update set name = excluded.name, kind = case when equipment.kind = 'room' then 'room' else excluded.kind end,
     description = excluded.description, features = excluded.features,
     price_per_hour = excluded.price_per_hour, max_players = excluded.max_players, bookable = excluded.bookable, is_active = excluded.is_active,
     status = excluded.status, status_note = excluded.status_note, photo_url = excluded.photo_url, map_x = excluded.map_x, map_y = excluded.map_y,
-    map_rot = excluded.map_rot, link_to = excluded.link_to, sort = excluded.sort, updated_at = now()
+    map_rot = excluded.map_rot, link_to = excluded.link_to, sort = excluded.sort, map_scale = excluded.map_scale,
+    model = excluded.model, label = excluded.label, schedule = excluded.schedule, updated_at = now()
   returning * into e;
   perform _audit('admin', null, 'equipment_saved', jsonb_build_object('id', e.id, 'price', e.price_per_hour, 'status', e.status));
   return to_jsonb(e);
@@ -777,6 +791,9 @@ declare eid text := p->>'id';
 begin
   perform _admin(p);
   if eid = 'room' then raise exception 'CANNOT_DELETE_ROOM'; end if;
+  if exists (select 1 from bookings where equipment_id = eid and ends_at > now() and status not in ('rejected','cancelled','expired')) then
+    raise exception 'HAS_FUTURE_BOOKINGS';
+  end if;
   if exists (select 1 from bookings where equipment_id = eid) then
     update equipment set is_active = false, bookable = false, updated_at = now() where id = eid;
     perform _audit('admin', null, 'equipment_hidden', jsonb_build_object('id', eid));
@@ -785,6 +802,21 @@ begin
   delete from equipment where id = eid;
   perform _audit('admin', null, 'equipment_deleted', jsonb_build_object('id', eid));
   return '{"ok":true}';
+end $$;
+
+-- Быстрое отключение / включение
+create or replace function admin_equipment_status(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare e equipment; st text := coalesce(p->>'status','ok');
+begin
+  perform _admin(p);
+  if st not in ('ok','maintenance','disabled') then raise exception 'BAD_INPUT'; end if;
+  update equipment set status = st, status_note = case when st = 'ok' then null else coalesce(nullif(p->>'note',''), status_note) end,
+    is_active = case when st = 'ok' then true else is_active end, updated_at = now()
+  where id = p->>'id' returning * into e;
+  if not found then raise exception 'EQUIPMENT_NOT_FOUND'; end if;
+  perform _audit('admin', null, case when st = 'ok' then 'equipment_enabled' else 'equipment_disabled' end, jsonb_build_object('id', e.id, 'note', e.status_note));
+  return to_jsonb(e);
 end $$;
 
 create or replace function admin_equipment_photo(p jsonb) returns jsonb
@@ -929,7 +961,7 @@ declare f record;
     'get_booking','upload_receipt','mark_paid','cancel_my_booking','admin_login','admin_logout','admin_ping','admin_change_password',
     'admin_dashboard','admin_list_bookings','admin_get_booking','admin_get_receipt','admin_booking_action','admin_update_booking',
     'admin_create_booking','admin_calendar','admin_block_create','admin_block_delete','admin_equipment_list','admin_equipment_save',
-    'admin_equipment_delete','admin_equipment_photo','admin_settings_get','admin_settings_save','admin_tariff_save','admin_tariff_delete',
+    'admin_equipment_delete','admin_equipment_photo','admin_equipment_status','admin_settings_get','admin_settings_save','admin_tariff_save','admin_tariff_delete',
     'admin_promo_save','admin_promo_delete','admin_notifications','admin_audit','admin_export'];
 begin
   for f in select p.oid::regprocedure as sig, p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' loop
