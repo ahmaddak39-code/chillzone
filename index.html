@@ -2,6 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<script src="/js/perf.js"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>CHILL ZONE — твоя игровая вселенная в Хасавюрте</title>
 <meta name="description" content="CHILL ZONE — игровое пространство в Хасавюрте: 5 игровых ПК с RTX, PlayStation-зона с ТВ 75″, VR, гоночный руль, аэрохоккей, настольный теннис и футбол. Онлайн-бронирование.">
@@ -11,7 +12,8 @@
 <meta name="theme-color" content="#050716">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Unbounded:wght@400;700;800&display=swap" rel="stylesheet">
+<link rel="preload" as="image" href="/img/hero-room.webp" media="(max-width:900px)">
 <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
@@ -83,7 +85,7 @@
     </div>
     <div class="fun-grid" id="funGrid"></div>
     <div class="room-cta rv" id="roomCta">
-      <img src="/img/room.webp" alt="Игровая комната CHILL ZONE" loading="lazy">
+      <picture><source type="image/avif" srcset="/img/room-640.avif 640w, /img/room.avif 1200w" sizes="(max-width:760px) 100vw, 50vw"><img src="/img/room.webp" srcset="/img/room-640.webp 640w, /img/room.webp 1200w" sizes="(max-width:760px) 100vw, 50vw" alt="Игровая комната CHILL ZONE" loading="lazy" decoding="async"></picture>
       <div class="in">
         <div class="kicker">Для компании</div>
         <h3>Забронируй всю игровую комнату</h3>
@@ -101,11 +103,11 @@
     <div class="kicker rv">Вживую</div>
     <h2 class="h2 rv d1">Так выглядит <span class="grad-text">CHILL ZONE</span></h2>
     <div class="gal rv d2">
-      <figure class="g1"><img src="/img/room.webp" alt="Общий вид зала" loading="lazy"><figcaption>Общий зал</figcaption></figure>
-      <figure><img src="/img/pcs.webp" alt="Игровые компьютеры" loading="lazy"><figcaption>Игровые ПК</figcaption></figure>
-      <figure><img src="/img/ps.webp" alt="PlayStation-зона" loading="lazy"><figcaption>PlayStation · 75″</figcaption></figure>
-      <figure><img src="/img/wheel.webp" alt="Гоночный симулятор" loading="lazy"><figcaption>Руль и Forza Horizon</figcaption></figure>
-      <figure><img src="/img/airhockey.webp" alt="Аэрохоккей" loading="lazy"><figcaption>Аэрохоккей</figcaption></figure>
+      <figure class="g1"><picture><source type="image/avif" srcset="/img/room-640.avif 640w, /img/room.avif 1200w" sizes="(max-width:760px) 50vw, 33vw"><img src="/img/room.webp" srcset="/img/room-640.webp 640w, /img/room.webp 1200w" sizes="(max-width:760px) 50vw, 33vw" alt="Общий вид зала" loading="lazy" decoding="async"></picture><figcaption>Общий зал</figcaption></figure>
+      <figure><picture><source type="image/avif" srcset="/img/pcs-640.avif 640w, /img/pcs.avif 1200w" sizes="(max-width:760px) 50vw, 33vw"><img src="/img/pcs.webp" srcset="/img/pcs-640.webp 640w, /img/pcs.webp 1200w" sizes="(max-width:760px) 50vw, 33vw" alt="Игровые компьютеры" loading="lazy" decoding="async"></picture><figcaption>Игровые ПК</figcaption></figure>
+      <figure><picture><source type="image/avif" srcset="/img/ps-640.avif 640w, /img/ps.avif 1200w" sizes="(max-width:760px) 50vw, 33vw"><img src="/img/ps.webp" srcset="/img/ps-640.webp 640w, /img/ps.webp 1200w" sizes="(max-width:760px) 50vw, 33vw" alt="PlayStation-зона" loading="lazy" decoding="async"></picture><figcaption>PlayStation · 75″</figcaption></figure>
+      <figure><picture><source type="image/avif" srcset="/img/wheel-640.avif 640w, /img/wheel.avif 1200w" sizes="(max-width:760px) 50vw, 33vw"><img src="/img/wheel.webp" srcset="/img/wheel-640.webp 640w, /img/wheel.webp 1200w" sizes="(max-width:760px) 50vw, 33vw" alt="Гоночный симулятор" loading="lazy" decoding="async"></picture><figcaption>Руль и Forza Horizon</figcaption></figure>
+      <figure><picture><source type="image/avif" srcset="/img/airhockey-640.avif 640w, /img/airhockey.avif 1200w" sizes="(max-width:760px) 50vw, 33vw"><img src="/img/airhockey.webp" srcset="/img/airhockey-640.webp 640w, /img/airhockey.webp 1200w" sizes="(max-width:760px) 50vw, 33vw" alt="Аэрохоккей" loading="lazy" decoding="async"></picture><figcaption>Аэрохоккей</figcaption></figure>
     </div>
   </div>
 </section>

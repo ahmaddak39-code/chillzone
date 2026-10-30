@@ -8,7 +8,14 @@
   $('#heroLogo').innerHTML = CZ.logoSVG('big') + '<div class="hero-word"><span>CHILL</span><span>ZONE</span></div>';
 
   // ---------- 3D ----------
-  hero = new Room3D($('#heroRoom'), { labels: false, interactive: false });
+  // На телефонах и слабых устройствах первый экран — заранее отрисованный кадр той же 3D-сцены
+  // (одна живая 3D-комната на странице вместо двух).
+  if (window.CZ_LITE) {
+    $('#heroRoom').innerHTML = '<div class="hero-still"><img src="/img/hero-room.webp" alt="3D-сцена игровой комнаты CHILL ZONE" width="1200" height="1100" fetchpriority="high"></div>';
+    hero = { setItems() {}, intro() {}, autoOrbit() {}, setStatus() {} };
+  } else {
+    hero = new Room3D($('#heroRoom'), { labels: false, interactive: false });
+  }
   room = new Room3D($('#room3d'), { onSelect: id => openPanel(id) });
 
   async function load() {
@@ -23,6 +30,12 @@
     const items = DATA.equipment;
     hero.setItems(items); room.setItems(items);
     hero.intro(); hero.autoOrbit();
+    if (window.CZ_watchFps) setTimeout(() => CZ_watchFps(() => {
+      // устройство не тянет полную графику — переключаем первый экран на готовый кадр
+      if (hero.orbit) clearInterval(hero.orbit); if (hero.ro) hero.ro.disconnect();
+      $('#heroRoom').innerHTML = '<div class="hero-still"><img src="/img/hero-room.webp" alt="3D-сцена игровой комнаты CHILL ZONE"></div>';
+      $('#heroRoom').classList.remove('room3d');
+    }), 3000);
     S.date = CZ.localDateStr(new Date());
     S.people = (DATA.settings.room && DATA.settings.room.base_people) || 5;
     const durs = DATA.settings.durations || [60, 120, 180, 240]; S.dur = durs.includes(120) ? 120 : durs[0];
@@ -314,6 +327,8 @@
     }
   }
 
+  // адаптивные размеры фото клуба
+  const ss = u => /^\/img\/[\w-]+\.webp$/.test(u || '') ? ` srcset="${u.replace('.webp', '-640.webp')} 640w, ${u} 1200w" sizes="(max-width:760px) 92vw, 300px" decoding="async"` : '';
   // ---------- развлечения ----------
   async function renderFun(statusOnly) {
     if (!DATA) return;
@@ -328,13 +343,13 @@
     let html = '';
     if (pcs.length) {
       const p0 = pcs[0]; const prices = [...new Set(pcs.map(p => p.price_per_hour))];
-      html += `<article class="fun rv"><div class="ph"><img src="${esc(p0.photo_url || '/img/pcs.webp')}" alt="Игровые компьютеры" loading="lazy"><span class="chip tag">🖥️ ${pcs.length} компьютеров</span></div>
+      html += `<article class="fun rv"><div class="ph"><img src="${esc(p0.photo_url || '/img/pcs.webp')}"${ss(p0.photo_url || '/img/pcs.webp')} alt="Игровые компьютеры" loading="lazy"><span class="chip tag">🖥️ ${pcs.length} компьютеров</span></div>
         <div class="body"><h3>Игровые компьютеры</h3><p>${esc(p0.description)}</p>
         <div class="room-quick" style="flex-wrap:wrap;padding:6px 0">${pcs.map(p => `<button data-pick="${p.id}" data-pc="${p.id}" data-st="${statusMap[p.id] || 'free'}"><i></i>${esc(p.name)}</button>`).join('')}</div>
         <div class="foot"><span class="price">${prices.length === 1 ? CZP.priceLabel(p0) : 'от ' + rub(Math.min(...prices.filter(x => x != null)))}</span><button class="btn btn-sm btn-neon" data-pick="${p0.id}">Выбрать</button></div></div></article>`;
     }
     for (const e of rest) {
-      html += `<article class="fun rv"><div class="ph" data-ph="${e.id}">${e.photo_url ? `<img src="${esc(e.photo_url)}" alt="${esc(e.name)}" loading="lazy">` : CZP.artHTML(e)}<span class="chip tag">${CZ.KIND_ICON[e.kind] || ''} <span data-st-for="${e.id}" class="st-badge ${statusMap[e.id] === 'free' ? '' : statusMap[e.id] || ''}">${statusMap[e.id] === 'busy' ? 'Занято' : statusMap[e.id] === 'off' ? 'Недоступно' : 'Свободно'}</span></span></div>
+      html += `<article class="fun rv"><div class="ph" data-ph="${e.id}">${e.photo_url ? `<img src="${esc(e.photo_url)}"${ss(e.photo_url)} alt="${esc(e.name)}" loading="lazy">` : CZP.artHTML(e)}<span class="chip tag">${CZ.KIND_ICON[e.kind] || ''} <span data-st-for="${e.id}" class="st-badge ${statusMap[e.id] === 'free' ? '' : statusMap[e.id] || ''}">${statusMap[e.id] === 'busy' ? 'Занято' : statusMap[e.id] === 'off' ? 'Недоступно' : 'Свободно'}</span></span></div>
         <div class="body"><h3>${esc(e.name)}</h3><p>${esc(e.description)}</p>
         <div class="foot"><span class="price">${CZP.priceLabel(e)}</span><button class="btn btn-sm ${e.price_per_hour != null ? 'btn-neon' : ''}" data-pick="${e.id}">Выбрать</button></div></div></article>`;
     }
@@ -350,7 +365,9 @@
   function renderContacts() { $('#contactsBox').innerHTML = CZP.contactsBlock(DATA.settings.contacts); }
 
   addEventListener('resize', () => placeCam());
-  const mob = $('#mobCta'); const onScroll = () => { if (!S.id) mob.classList.toggle('hide', scrollY < innerHeight * 0.8 || (document.querySelector('.site-footer') && document.querySelector('.site-footer').getBoundingClientRect().top < innerHeight)); };
+  const mob = $('#mobCta'); let roomVis = false;
+  new IntersectionObserver(es => { roomVis = es[0].isIntersecting; onScroll(); }, { threshold: .25 }).observe($('#roomWrap'));
+  const onScroll = () => { if (!S.id) mob.classList.toggle('hide', roomVis || scrollY < innerHeight * 0.8 || (document.querySelector('.site-footer') && document.querySelector('.site-footer').getBoundingClientRect().top < innerHeight)); };
   addEventListener('scroll', onScroll, { passive: true }); onScroll();
   load();
 })();

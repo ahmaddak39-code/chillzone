@@ -13,16 +13,21 @@
     parent.appendChild(f); return f;
   }
   // Короб: x,y — левый верхний угол в плане, z — высота основания
+  // В облегчённом режиме не строим грани, которые камера не видит (север и запад),
+  // и мелкие детали — это почти вдвое меньше слоёв для GPU.
+  const isLite = () => !!window.CZ_LITE;
   function box(parent, o) {
     const { x = 0, y = 0, z = 0, w, d, h, c = '#2a2f66' } = o;
+    const lite = isLite();
+    if (lite && !o.keep && w * d * h < 700) return { g: null, top: null, s: null, e: null, n: null, w: null, skipped: true };
     const g = document.createElement('div'); g.className = 'r3-obj-part'; g.style.cssText = `position:absolute;left:0;top:0;transform-style:preserve-3d;transform:translate3d(${x}px,${y}px,${z}px)`;
     const top = face(g, w, d, `translate3d(0,0,${h}px)`, o.top || c, o.topCls);
     const s = face(g, w, h, `translate3d(0,${d}px,${h}px) rotateX(-90deg)`, o.south || shade(c, .78), o.southCls);
     const e = face(g, d, h, `translate3d(${w}px,0,${h}px) rotateZ(90deg) rotateX(-90deg)`, o.east || shade(c, .62), o.eastCls);
-    const n = face(g, w, h, `translate3d(0,0,${h}px) rotateX(-90deg)`, o.north || shade(c, .5), o.northCls);
-    const wst = face(g, d, h, `translate3d(0,0,${h}px) rotateZ(90deg) rotateX(-90deg)`, o.west || shade(c, .7), o.westCls);
-    if (o.round) [top, s, e, n, wst].forEach(f => f.style.borderRadius = o.round + 'px');
-    parent.appendChild(g); return { g, top, s, e, n, w: wst };
+    const n = lite ? null : face(g, w, h, `translate3d(0,0,${h}px) rotateX(-90deg)`, o.north || shade(c, .5), o.northCls);
+    const wst = lite ? null : face(g, d, h, `translate3d(0,0,${h}px) rotateZ(90deg) rotateX(-90deg)`, o.west || shade(c, .7), o.westCls);
+    if (o.round) [top, s, e, n, wst].forEach(f => f && (f.style.borderRadius = o.round + 'px'));
+    parent.appendChild(g); return { g, top, s, e, n, w: wst || e };
   }
   function flat(parent, o) { // плоская деталь (диск, ковер)
     const f = face(parent, o.w, o.d, `translate3d(${o.x}px,${o.y}px,${o.z || 0.5}px)`, o.bg, o.cls);
@@ -96,7 +101,7 @@
     foosball(g) {
       [[-50, -28], [44, -28], [-50, 22], [44, 22]].forEach(([x, y]) => box(g, { x, y, z: 0, w: 6, d: 6, h: 30, c: '#2a1a12' }));
       box(g, { x: -55, y: -32, z: 30, w: 110, d: 64, h: 20, c: '#6b4528', top: 'linear-gradient(90deg,transparent 49.5%,#fff 49.5% 50.5%,transparent 50.5%),radial-gradient(circle,transparent 10px,#fff 10px 12px,transparent 12px),#1f9a4a' });
-      for (let i = 0; i < 8; i++) box(g, { x: -44 + i * 12.5, y: -42, z: 50, w: 2, d: 84, h: 2, c: '#d6dae8' });
+      for (let i = 0; i < 8; i++) box(g, { x: -44 + i * 12.5, y: -42, z: 50, w: 2, d: 84, h: 2, c: '#d6dae8', keep: true });
       return { pad: [-64, -46, 128, 92], labelZ: 80 };
     },
     other(g) {
@@ -115,7 +120,7 @@
       this.buildShell();
       if (opts.interactive !== false) this.bindGestures();
       this.fit(); this.apply(true);
-      this.ro = new ResizeObserver(() => { const keep = this.sel; this.fit(); if (keep) this.focus(keep, true); else this.apply(); });
+      this.ro = new ResizeObserver(() => { clearTimeout(this._rt); this._rt = setTimeout(() => { const keep = this.sel; this.fit(); if (keep) this.focus(keep, true); else this.apply(); }, 120); });
       this.ro.observe(el);
       // пауза отрисовки вне экрана
       this.io = new IntersectionObserver(es => es.forEach(e => this.camEl.style.visibility = e.isIntersecting ? 'visible' : 'hidden'), { rootMargin: '100px' });
@@ -228,7 +233,12 @@
         if (!start) return;
         const dx = e.clientX - start.x, dy = e.clientY - start.y;
         if (!moved && Math.hypot(dx, dy) > 7) { moved = true; el.classList.add('dragging'); try { el.setPointerCapture(e.pointerId); } catch (x) {} }
-        if (moved) { this.cam.rz = start.rz + dx * .3; if (e.pointerType === 'mouse') this.cam.rx = Math.max(32, Math.min(74, start.rx - dy * .2)); this.apply(); this.hideHint(); }
+        if (moved) {
+          let rz = start.rz + dx * .3; if (isLite()) rz = Math.max(-78, Math.min(-4, rz));
+          this.cam.rz = rz; if (e.pointerType === 'mouse') this.cam.rx = Math.max(32, Math.min(74, start.rx - dy * .2));
+          if (!this._raf) this._raf = requestAnimationFrame(() => { this._raf = 0; this.apply(); });
+          this.hideHint();
+        }
       });
       const up = e => {
         if (!pts.has(e.pointerId)) return; pts.delete(e.pointerId);

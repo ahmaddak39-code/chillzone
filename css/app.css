@@ -386,3 +386,47 @@ select.inp option{background:#0e1435}
 @media (max-width:980px){.hero-visual.room3d{height:380px;overflow:hidden}}
 
 @media (max-width:760px){.bk-head{height:112px}.bk-head .ttl h3{font-size:20px}}
+
+/* =========================================================
+   ОБЛЕГЧЁННАЯ ГРАФИКА (телефоны и слабые устройства)
+   Сохраняем неон и стиль, убираем дорогие эффекты:
+   размытие фона, бесконечные анимации на 3D-гранях, огромные тени.
+   ========================================================= */
+.hero{min-height:100vh;min-height:100svh}
+.lite .bg-fx::before{animation:none;opacity:.6}
+.lite .bg-fx::after{display:none}
+.lite .orb{display:none}
+.lite .bg-fx{background:
+  radial-gradient(900px 600px at 85% -5%,rgba(61,107,255,.28),transparent 60%),
+  radial-gradient(700px 500px at -10% 35%,rgba(139,92,255,.24),transparent 60%),
+  radial-gradient(600px 500px at 70% 105%,rgba(255,63,180,.14),transparent 60%),var(--bg)}
+.lite .site-header.scrolled,.lite .site-header.open{background:rgba(5,7,22,.95);backdrop-filter:none;-webkit-backdrop-filter:none}
+.lite .card,.lite .bk-panel,.lite .room-legend,.lite .tbtn,.lite .room-zoom button,.lite .room-hint,.lite .gal figcaption,.lite #sub div,.lite .side,.lite .tabbar,.lite .modal{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.lite .card{background:rgba(14,19,52,.94)}
+.lite .bk-panel{background:#0a0e2c;box-shadow:0 -10px 40px rgba(0,0,0,.6),0 0 0 1px rgba(34,227,255,.35)}
+.lite .tabbar{background:#060818}
+.lite .screen,.lite .rgb{animation:none!important}
+.lite .r3-obj .pad,.lite .r3-obj.selected .pad{animation:none;box-shadow:0 0 10px var(--st,var(--ok))}
+.lite .r3-obj.selected .pad{box-shadow:0 0 16px var(--sel)}
+.lite .r3-obj.selected .glowy{box-shadow:none!important}
+.lite .r3-label>div{box-shadow:none}
+.lite .vr-ring{animation:none;transform:translate3d(-45px,-45px,80px) rotateX(70deg)}
+.lite .r3-floor{box-shadow:0 0 0 2px rgba(34,227,255,.35)}
+.lite .r3-floor::after{display:none}
+.lite .r3-wall .neon-strip{box-shadow:none}
+.lite .r3-wall .neon-sign{text-shadow:0 0 6px var(--pink),0 0 16px var(--pink)}
+.lite .btn-neon{animation:none}
+.lite .glitch::before,.lite .glitch::after{display:none}
+.lite .fun{transform-style:flat}
+.lite .fun:hover{transform:none}
+.lite .hero-logo .cz-logo .lg-hex2{animation:fadein .6s 1.5s forwards}
+.lite .hero-logo .cz-logo .lg-dot{animation:fadein .4s 1.8s forwards}
+.lite .scroll-hint::after{animation:none}
+.lite .gal img,.lite .fun .ph img{transition:none}
+/* статичная картинка 3D-сцены вместо второй живой 3D-комнаты на первом экране */
+.hero-still{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.hero-still img{width:100%;height:100%;object-fit:contain;animation:heroFloat 7s ease-in-out infinite;will-change:transform}
+@keyframes heroFloat{50%{transform:translateY(-10px) scale(1.015)}}
+.lite .hero-still img{animation:none}
+.gal picture,.room-cta picture{display:block;width:100%;height:100%}
+@media (max-width:980px){.hero-visual:has(.hero-still){height:auto;margin:0 -12px}.hero-still img{height:auto}}
