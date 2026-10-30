@@ -170,7 +170,7 @@
       <div id="hourBlock" ${S.npk ? 'hidden' : ''}>
       <label class="lbl">Продолжительность</label><div class="segs" id="durs">${segs}</div>${customSel}
       <div id="bonusNote"></div>
-      <label class="lbl">Время начала <span class="dim" style="letter-spacing:0;text-transform:none;font-weight:600">· зелёное — свободно</span></label><div class="slots" id="slots"><div class="slots-empty">Загружаю свободное время…</div></div>
+      <label class="lbl">Время начала <span class="dim" style="letter-spacing:0;text-transform:none;font-weight:600">· зелёное — свободно</span></label><div class="slots" id="slots"><div class="slots-empty">Загружаю свободное время…</div></div><div id="hoursNote"></div>
       </div>
       <div id="nightPkg"></div>
       ${people}
@@ -279,6 +279,7 @@
     return false;
   }
   // ночной пакет: только вся комната (настраивается в админке)
+  const DAY_FROM = 9 * 60, DAY_TO = 24 * 60;   // окно почасовой брони, минуты от начала суток (время клуба)
   function nightPkgOn(it) { const np = DATA.settings.night_package; return it && it.kind === 'room' && np && np.enabled ? np : null; }
   function nightWin(date) {
     const np = DATA.settings.night_package; const a = CZ.zoned(date, np.start); let b = CZ.zoned(date, np.end);
@@ -312,10 +313,11 @@
     if ($('#nightPkg')) $('#nightPkg').innerHTML = '';
     renderBonusNote(it);
     const now = S.serverNow ? Math.max(Date.now(), S.serverNow) : Date.now();
-    const occ = (S.dur + bonusFor(it, S.dur)) * 60000;
+    // почасовая бронь — только 09:00–00:00 (сервер проверяет то же самое); ночь — только ночной пакет всей комнаты
+    const occM = Math.min(S.dur + bonusFor(it, S.dur), DAY_TO);
     let html = '', free = 0;
-    for (let m = 0; m < 24 * 60; m += 30) {
-      const t = CZ.zoned(S.date, CZ.pad(Math.floor(m / 60)) + ':' + CZ.pad(m % 60)); const a = t.getTime(), b = a + occ;
+    for (let m = DAY_FROM; m + S.dur <= DAY_TO; m += 30) {
+      const t = CZ.zoned(S.date, CZ.pad(Math.floor(m / 60)) + ':' + CZ.pad(m % 60)); const a = t.getTime(), b = a + Math.min(occM, DAY_TO - m) * 60000;
       const past = a < now - 5 * 60000;
       let ok = !past; if (ok) for (let k = 0; k < S.dur; k += 30) if (!isOpen(new Date(a + k * 60000), it)) { ok = false; break; }
       const clash = ok && S.busy.some(([x, y]) => a < y && b > x);
@@ -324,7 +326,8 @@
       html += `<button data-t="${t.toISOString()}" ${ok && !clash ? '' : 'disabled'} class="${S.start === t.toISOString() ? 'on' : ''} ${!ok ? 'past' : ''}" title="${clash ? 'Занято' : !ok ? 'Клуб закрыт' : 'Свободно'}">${lbl}</button>`;
       if (ok && !clash) free++;
     }
-    box.innerHTML = html || '<div class="slots-empty">На эту дату время уже прошло — выберите другой день.</div>';
+    box.innerHTML = html || `<div class="slots-empty">${S.dur > DAY_TO - DAY_FROM ? 'Такая продолжительность не помещается в 09:00–00:00.' : 'На эту дату время уже прошло — выберите другой день.'}</div>`;
+    const hn = $('#hoursNote'); if (hn) hn.innerHTML = `<div class="note info" style="margin:8px 0 0">🕘 Почасовая бронь — с 09:00 до 00:00.${nightPkgOn(it) ? ' Ночью (00:00–07:00) — только 🌙 ночной пакет всей комнаты, строго 18+.' : ''}</div>`;
     if (html && !free) box.insertAdjacentHTML('afterbegin', '<div class="slots-empty">Свободного времени на эту дату нет. Выберите другую дату или другое оборудование.</div>');
     if (S.start && !$$('#slots button:not(:disabled)').some(b => b.dataset.t === S.start)) S.start = null;
     box.onclick = e => { const b = e.target.closest('button[data-t]'); if (!b || b.disabled) return; S.start = b.dataset.t; $$('#slots button').forEach(x => x.classList.toggle('on', x === b)); requote(); };
@@ -431,7 +434,11 @@
     CZ.reveal();
   }
   function renderPromos() { $('#promoGrid').innerHTML = CZP.promoCards((DATA.promotions || []).slice(0, 3)); }
-  function renderContacts() { $('#contactsBox').innerHTML = CZP.contactsBlock(DATA.settings.contacts); const old = $('#nightCardBox'); if (old) old.remove(); const nc = CZP.nightCard(DATA.settings); if (nc) $('#contactsBox').insertAdjacentHTML('afterend', `<div id="nightCardBox">${nc}</div>`); }
+  function renderContacts() {
+    $('#contactsBox').innerHTML = CZP.contactsBlock(DATA.settings.contacts);
+    const nc = CZP.nightCard(DATA.settings); const sec = $('#night');
+    if (sec) { $('#nightSec').innerHTML = nc; sec.hidden = !nc; }
+  }
 
   addEventListener('resize', () => placeCam());
   addEventListener('cz-intro-done', () => { try { hero.intro(); } catch (e) {} });

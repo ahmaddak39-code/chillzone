@@ -246,6 +246,9 @@ begin
 
   total := round(base_sum * (100 - disc_pct) / 100) + round(extra_sum);
   due := total;
+  -- бонусное время не выходит за 00:00 (после полуночи — только ночной пакет)
+  bonus := greatest(0, least(bonus, (extract(epoch from ((_local(st)::date + 1)::timestamp at time zone _tz()) - st) / 60)::int - paid_min));
+  if bonus = 0 then bonus_label := null; end if;
   en := st + make_interval(mins => paid_min + bonus);
 
   return jsonb_build_object(
@@ -300,6 +303,12 @@ begin
     if st < now() - interval '5 minutes' then raise exception 'TIME_IN_PAST'; end if;
     if st > now() + make_interval(days => horizon) then raise exception 'TOO_FAR'; end if;
     if not e.bookable or not e.is_active or e.status <> 'ok' then raise exception 'EQUIPMENT_UNAVAILABLE'; end if;
+    -- почасовая бронь (любое оборудование и вся комната): только 09:00–00:00 по времени клуба;
+    -- ночь 00:00–07:00 — только ночной пакет всей комнаты
+    if _local(st)::time < time '09:00'
+       or st + make_interval(mins => paid_min) > ((_local(st)::date + 1)::timestamp at time zone _tz()) then
+      raise exception 'DAY_HOURS_ONLY';
+    end if;
     for i in 0..(paid_min/30)-1 loop
       if not _is_open(st + make_interval(mins => i*30)) then raise exception 'CLOSED_HOURS'; end if;
       if e.schedule is not null and not _open_by(e.schedule, st + make_interval(mins => i*30)) then raise exception 'CLOSED_HOURS'; end if;

@@ -22,9 +22,9 @@
     const np = s && s.night_package; if (!np || !np.enabled) return '';
     return `<div class="night-pkg night-card"><div class="np-k">🌙 Ночной пакет CHILL ZONE</div>
       <div class="np-t">${esc(np.start)}–${esc(np.end)}</div>
-      <div class="np-d">Вся игровая комната только для вашей компании — всю ночь</div>
-      <div class="np-grid"><div><small>Время</small><b>${esc(np.start)}–${esc(np.end)}</b></div><div><small>Стоимость</small><b>${rub(np.price)}</b></div>
-        <div><small>Возраст</small><b>строго ${np.min_age || 18}+</b></div><div><small>Условие</small><b>вся комната</b></div></div>
+      <div class="np-row"><span>Вся игровая комната</span><b>${rub(np.price)}</b></div>
+      <div class="np-age">Строго ${np.min_age || 18}+</div>
+      <div class="np-d">Вся игровая комната только для вашей компании — всю ночь. Отдельные компьютеры и оборудование ночью не бронируются.</div>
       <a class="btn btn-neon btn-sm" href="/#book=room&night=1" style="margin-top:14px">Забронировать ночь</a></div>`;
   }
 
