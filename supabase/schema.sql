@@ -7,6 +7,8 @@
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
 create extension if not exists btree_gist with schema extensions;
+-- pg_net: исходящие HTTP-запросы для уведомлений (WhatsApp/Telegram). Если недоступно — уведомления остаются в админ-панели.
+do $$ begin create extension if not exists pg_net; exception when others then raise notice 'pg_net недоступен'; end $$;
 
 -- ---------- Настройки ----------
 create table if not exists settings (
@@ -335,7 +337,8 @@ insert into settings(key, value) values
  ('contacts', '{"address": "г. Хасавюрт, ул. Тотурбиева, 137", "phone": "+7 928 553-52-52", "instagram": "chill.zone.game"}'),
  ('admin_idle_minutes', '30'),
  ('telegram', '{"enabled": false, "bot_token": "", "chat_id": ""}'),
- ('notify', '{"whatsapp": "79285535252", "label": "+7 928 553-52-52"}')
+ ('notify', '{"whatsapp": "79285535252", "label": "+7 928 553-52-52"}'),
+ ('whatsapp_bot', '{"enabled": false, "phone": "79285535252", "apikey": ""}')
 on conflict (key) do nothing;
 
 insert into equipment(id,name,kind,description,features,price_per_hour,max_players,bookable,photo_url,map_x,map_y,map_rot,sort,link_to) values

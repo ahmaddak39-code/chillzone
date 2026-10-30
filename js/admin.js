@@ -737,7 +737,7 @@
 
   async function settings() {
     const S = await loadSettings(); const s = S.settings;
-    const wh = s.work_hours || { always_open: true, days: {} }; const cd = s.custom_duration || {}; const pay = s.payment || {}; const ct = s.contacts || {}; const tg = s.telegram || {};
+    const wh = s.work_hours || { always_open: true, days: {} }; const cd = s.custom_duration || {}; const pay = s.payment || {}; const ct = s.contacts || {}; const tg = s.telegram || {}; const wb = s.whatsapp_bot || {};
     const durs = s.durations || [];
     main().innerHTML = top('Настройки') + `
       <div class="box" style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-sm" href="/admin/prices" data-r>💰 Тарифы</a><a class="btn btn-sm" href="/admin/promos" data-r>🎁 Акции</a><a class="btn btn-sm" href="/admin/equipment" data-r>🖥️ Оборудование</a><a class="btn btn-sm" href="/admin/balance" data-r>💳 Баланс клиентов</a><a class="btn btn-sm" href="/" target="_blank">🌐 Сайт</a><button class="btn btn-sm btn-bad" id="lo2">🚪 Выйти</button></div>
@@ -774,6 +774,17 @@
         <div class="fgrid"><div class="fld full"><label>Рабочий номер для уведомлений (WhatsApp)</label><input class="inp" id="nW" inputmode="tel" value="${esc((s.notify || {}).label || '+7 928 553-52-52')}"></div></div>
         <p class="dim" style="font-size:12px;margin:6px 0 10px">На этот номер клиенты отправляют чеки и сообщения о заявке, об аренде всей комнаты и об отмене — кнопки на странице заявки открывают WhatsApp с готовым текстом: имя, оборудование, дата, время, сумма и статус.</p>
         <button class="btn btn-neon" id="svN">Сохранить номер</button>
+        <div class="box" style="margin:16px 0 0;border-color:rgba(37,211,102,.5)"><h3 style="margin:0 0 6px">💬 Автоматические сообщения в WhatsApp</h3>
+          <p class="muted" style="font-size:14px;margin:0 0 10px">Сообщение сразу приходит на ваш WhatsApp, когда клиент: бронирует (компьютер, PlayStation, комнату и т.д.), оплачивает с баланса, загружает чек, создаёт или оплачивает пополнение баланса, отменяет бронь. Работает через бесплатный сервис CallMeBot.</p>
+          <ol class="muted" style="font-size:14px;margin:0 0 12px;padding-left:20px">
+            <li>Откройте <a href="https://www.callmebot.com/blog/free-api-whatsapp-messages/" target="_blank" rel="noopener"><u>страницу CallMeBot</u></a> и добавьте указанный там номер бота в контакты телефона.</li>
+            <li>С WhatsApp номера, на который нужны уведомления, отправьте этому контакту: <b>I allow callmebot to send me messages</b></li>
+            <li>Бот пришлёт <b>apikey</b> (несколько цифр). Вставьте его ниже, включите галочку и нажмите «Сохранить», затем «Проверить».</li></ol>
+          <div class="fgrid"><label class="tgl full"><input type="checkbox" id="waE" ${wb.enabled ? 'checked' : ''}> Отправлять уведомления в WhatsApp</label>
+          <div class="fld"><label>Номер WhatsApp для уведомлений</label><input class="inp" id="waP" inputmode="tel" value="${esc(wb.phone ? '+' + wb.phone : '+79285535252')}"></div>
+          <div class="fld"><label>apikey от CallMeBot ${wb.has_key ? '(сохранён)' : ''}</label><input class="inp" id="waK" inputmode="numeric" placeholder="${wb.has_key ? '•••••• (оставьте пустым)' : 'например 1234567'}"></div></div>
+          <p class="dim" style="font-size:12px">В сообщениях есть имя и телефон клиента — они передаются через сервис CallMeBot. Номер для перевода денег (Т-Банк) сюда не подставляйте.</p>
+          <button class="btn btn-neon" id="svWa">Сохранить</button> <button class="btn" id="tsWa">📨 Проверить</button></div>
         <p class="muted" style="font-size:14px;margin-top:16px">Все события — новая заявка, аренда всей комнаты, чек, «ожидает проверки», оплата проверена, бронь подтверждена, отмена, перенос — сразу появляются в этой панели (счётчик на вкладке «Брони») с полными данными заявки. Автоматически, без участия клиента, их можно получать в Telegram через официального бота.</p>
         <div class="fgrid"><label class="tgl full"><input type="checkbox" id="tgE" ${tg.enabled ? 'checked' : ''}> Отправлять в Telegram</label>
         <div class="fld"><label>Токен бота ${tg.has_token ? '(сохранён)' : ''}</label><input class="inp" id="tgT" type="password" placeholder="${tg.has_token ? '•••••• (оставьте пустым)' : '123456:ABC…'}"></div>
@@ -797,6 +808,8 @@
     $('#svC').onclick = async () => { try { await saveSetting('contacts', { address: $('#cA').value, phone: $('#cP').value, instagram: $('#cI').value.replace(/^@/, '') }); ok(); } catch (e) { bad(e); } };
     $('#svN').onclick = async () => { try { let d = $('#nW').value.replace(/\D/g, ''); if (d.length === 11 && d[0] === '8') d = '7' + d.slice(1); if (d.length === 10) d = '7' + d; if (d.length < 11) throw new Error('Введите номер полностью, например +7 928 553-52-52');
       const label = `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9, 11)}`; await saveSetting('notify', { whatsapp: d, label }); $('#nW').value = label; ok(); } catch (e) { bad(e); } };
+    $('#svWa').onclick = async () => { try { const d = $('#waP').value.replace(/\D/g, '').replace(/^8/, '7'); if (d.length !== 11) throw new Error('Введите номер WhatsApp полностью'); if (d === '79280605550') throw new Error('Это номер для оплаты. Укажите рабочий номер для уведомлений.'); await saveSetting('whatsapp_bot', { enabled: $('#waE').checked, phone: d, apikey: $('#waK').value.trim() }); ok(); settings(); } catch (e) { bad(e); } };
+    $('#tsWa').onclick = async () => { try { const r = await api('admin_whatsapp_test'); const M = { wa_queued: 'Тестовое сообщение отправлено — проверьте WhatsApp через минуту', off: 'Сначала включите галочку, вставьте apikey и нажмите «Сохранить»', wa_not_available: 'В базе не включено расширение pg_net', wa_error: 'Ошибка отправки' }; toast(M[r.status] || r.status, r.status === 'wa_queued' ? 'ok' : 'err'); } catch (e) { bad(e); } };
     $('#svT').onclick = async () => { try { await saveSetting('telegram', { enabled: $('#tgE').checked, bot_token: $('#tgT').value, chat_id: $('#tgC').value }); ok(); } catch (e) { bad(e); } };
     $('#svPw').onclick = async () => { try { await api('admin_change_password', { old_password: $('#op').value, new_password: $('#np').value }); try { sessionStorage.removeItem('cz_must_change'); } catch (x) {} toast('Пароль изменён. Другие сессии завершены.', 'ok'); settings(); } catch (e) { bad(e); } };
     $('#svIdle').onclick = async () => { try { const v = +$('#idle').value; await saveSetting('admin_idle_minutes', v); IDLE_MIN = v; touch(); ok(); } catch (e) { bad(e); } };

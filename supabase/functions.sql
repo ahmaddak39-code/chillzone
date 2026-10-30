@@ -80,9 +80,25 @@ end $$;
 
 
 -- Уведомление: всегда в админ-панели; в Telegram — только если интеграция включена и pg_net подключён.
+-- Отправка в WhatsApp через CallMeBot (бесплатный бот, сообщения приходят на номер владельца)
+create or replace function _wa_send(msg text) returns text
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare w jsonb := _setting('whatsapp_bot');
+begin
+  if not coalesce((w->>'enabled')::boolean, false) or coalesce(w->>'apikey','') = '' or coalesce(w->>'phone','') = '' then return 'off'; end if;
+  if to_regproc('net.http_get') is null then return 'wa_not_available'; end if;
+  begin
+    execute 'select net.http_get(url := $1, params := $2, timeout_milliseconds := 10000)'
+      using 'https://api.callmebot.com/whatsapp.php',
+            jsonb_build_object('phone', '+' || regexp_replace(w->>'phone', '\D', '', 'g'), 'text', 'CHILL ZONE' || E'\n' || msg, 'apikey', w->>'apikey');
+    return 'wa_queued';
+  exception when others then return 'wa_error';
+  end;
+end $$;
+
 create or replace function _notify(ev text, bid uuid, msg text) returns void
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
-declare tg jsonb := _setting('telegram'); st text := 'in_app';
+declare tg jsonb := _setting('telegram'); st text := 'in_app'; ws text;
 begin
   if coalesce((tg->>'enabled')::boolean, false) and coalesce(tg->>'bot_token','') <> '' and coalesce(tg->>'chat_id','') <> '' then
     if to_regproc('net.http_post') is not null then
@@ -97,6 +113,11 @@ begin
     else
       st := 'telegram_not_available';
     end if;
+  end if;
+  -- WhatsApp: только события от клиентов (свои действия админ и так видит)
+  if ev in ('new_booking','new_room_booking','receipt_sent','pending_review','cancelled','topup_new','topup_receipt') then
+    ws := _wa_send(msg);
+    if ws <> 'off' then st := case when st = 'in_app' then ws else st || ',' || ws end; end if;
   end if;
   insert into notifications(event, booking_id, message, channel_status) values (ev, bid, msg, st);
 end $$;
@@ -933,7 +954,8 @@ language plpgsql volatile security definer set search_path = public, extensions,
 begin
   perform _admin(p);
   return jsonb_build_object(
-    'settings', (select jsonb_object_agg(key, case when key = 'telegram' then value - 'bot_token' || jsonb_build_object('has_token', coalesce(value->>'bot_token','') <> '') else value end) from settings),
+    'settings', (select jsonb_object_agg(key, case when key = 'telegram' then value - 'bot_token' || jsonb_build_object('has_token', coalesce(value->>'bot_token','') <> '')
+                                                   when key = 'whatsapp_bot' then value - 'apikey' || jsonb_build_object('has_key', coalesce(value->>'apikey','') <> '') else value end) from settings),
     'tariffs', (select coalesce(jsonb_agg(to_jsonb(t) order by t.priority desc, t.created_at), '[]'::jsonb) from tariff_rules t),
     'promotions', (select coalesce(jsonb_agg(to_jsonb(x) order by x.sort, x.created_at), '[]'::jsonb) from promotions x));
 end $$;
@@ -943,13 +965,17 @@ language plpgsql volatile security definer set search_path = public, extensions,
 declare k text := p->>'key'; v jsonb := p->'value';
 begin
   perform _admin(p);
-  if k not in ('timezone','hold_minutes','durations','custom_duration','booking_horizon_days','work_hours','room','student_discount_percent','night','payment','contacts','admin_idle_minutes','telegram','notify','balance') then
+  if k not in ('timezone','hold_minutes','durations','custom_duration','booking_horizon_days','work_hours','room','student_discount_percent','night','payment','contacts','admin_idle_minutes','telegram','notify','balance','whatsapp_bot') then
     raise exception 'BAD_KEY';
   end if;
   if k = 'telegram' and coalesce(v->>'bot_token','') = '' then
     v := v || jsonb_build_object('bot_token', coalesce((select value->>'bot_token' from settings where key='telegram'), ''));
   end if;
   if k = 'telegram' then v := v - 'has_token'; end if;
+  if k = 'whatsapp_bot' then
+    if coalesce(v->>'apikey','') = '' then v := v || jsonb_build_object('apikey', coalesce((select value->>'apikey' from settings where key='whatsapp_bot'), '')); end if;
+    v := v - 'has_key';
+  end if;
   insert into settings(key, value) values (k, v) on conflict (key) do update set value = excluded.value, updated_at = now();
   perform _audit('admin', null, 'settings_saved', jsonb_build_object('key', k));
   return '{"ok":true}';
@@ -1039,7 +1065,7 @@ begin
     'blocks', (select coalesce(jsonb_agg(to_jsonb(x)), '[]') from blocks x),
     'tariff_rules', (select coalesce(jsonb_agg(to_jsonb(x)), '[]') from tariff_rules x),
     'promotions', (select coalesce(jsonb_agg(to_jsonb(x)), '[]') from promotions x),
-    'settings', (select jsonb_object_agg(key, case when key='telegram' then value - 'bot_token' else value end) from settings),
+    'settings', (select jsonb_object_agg(key, case when key='telegram' then value - 'bot_token' when key='whatsapp_bot' then value - 'apikey' else value end) from settings),
     'audit_log', (select coalesce(jsonb_agg(to_jsonb(x)), '[]') from (select * from audit_log order by at desc limit 5000) x));
 end $$;
 
@@ -1153,7 +1179,7 @@ begin
   loop cd := 'TP-' || _rand_code(6); exit when not exists (select 1 from topups where code = cd); end loop;
   insert into topups(code, account_id, amount) values (cd, a.id, amt) returning * into t;
   perform _audit('client', null, 'topup_created', jsonb_build_object('code', cd, 'amount', amt, 'phone', a.phone));
-  insert into notifications(event, message) values ('topup_new', format(E'💰 Заявка на пополнение баланса %s\nКлиент: %s, +%s\nСумма: %s ₽\nСтатус: ожидает оплаты', cd, a.name, a.phone, amt));
+  perform _notify('topup_new', null, format(E'💰 Заявка на пополнение баланса %s\nКлиент: %s, +%s\nСумма: %s ₽\nСтатус: ожидает оплаты', cd, a.name, a.phone, amt));
   return jsonb_build_object('topup', to_jsonb(t), 'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'));
 end $$;
 
@@ -1172,7 +1198,7 @@ begin
   if exists (select 1 from topup_receipts where file_hash = h) or exists (select 1 from receipts where file_hash = h) then raise exception 'RECEIPT_USED'; end if;
   insert into topup_receipts(topup_id, mime, data, size_bytes, file_hash) values (t.id, m, d, length(d) * 3 / 4, h);
   update topups set status = 'receipt_sent', updated_at = now() where id = t.id returning * into t;
-  insert into notifications(event, message) values ('topup_receipt', format(E'📎 Чек по пополнению баланса %s — ожидает проверки\nКлиент: %s, +%s\nСумма: %s ₽\nПроверьте поступление денег в банке.', t.code, a.name, a.phone, t.amount));
+  perform _notify('topup_receipt', null, format(E'📎 Чек по пополнению баланса %s — ожидает проверки\nКлиент: %s, +%s\nСумма: %s ₽\nПроверьте поступление денег в банке.', t.code, a.name, a.phone, t.amount));
   return to_jsonb(t);
 end $$;
 
@@ -1293,6 +1319,16 @@ begin
   return '{"ok":true}';
 end $$;
 
+create or replace function admin_whatsapp_test(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare st text;
+begin
+  perform _admin(p);
+  st := _wa_send(E'✅ Проверка уведомлений: WhatsApp подключён. Сюда будут приходить новые брони, чеки, пополнения баланса и отмены.');
+  insert into notifications(event, message, channel_status, seen) values ('wa_test', 'Проверка WhatsApp', st, true);
+  return jsonb_build_object('status', st);
+end $$;
+
 -- =====================================================================
 -- Права: внутренние функции недоступны снаружи, RPC — доступны
 -- =====================================================================
@@ -1301,7 +1337,7 @@ declare f record;
   api text[] := array['get_public_data','get_equipment_photo','get_availability','get_occupancy','quote_booking','create_booking',
     'get_booking','upload_receipt','mark_paid','cancel_my_booking','admin_login','admin_logout','admin_ping','admin_change_password',
     'admin_dashboard','admin_list_bookings','admin_get_booking','admin_get_receipt','admin_booking_action','admin_update_booking',
-    'admin_create_booking','admin_calendar','admin_block_create','admin_block_delete','admin_equipment_list','admin_equipment_save',
+    'admin_create_booking','admin_whatsapp_test','admin_calendar','admin_block_create','admin_block_delete','admin_equipment_list','admin_equipment_save',
     'admin_equipment_delete','admin_equipment_photo','admin_equipment_status','admin_settings_get','admin_settings_save','admin_tariff_save','admin_tariff_delete',
     'admin_promo_save','admin_promo_delete','admin_notifications','admin_audit','admin_export',
     'client_register','client_login','client_logout','client_me','client_topup_create','client_topup_receipt','client_topup_cancel','client_cancel_booking',
