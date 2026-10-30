@@ -365,6 +365,7 @@
   function renderContacts() { $('#contactsBox').innerHTML = CZP.contactsBlock(DATA.settings.contacts); }
 
   addEventListener('resize', () => placeCam());
+  addEventListener('cz-intro-done', () => { try { hero.intro(); } catch (e) {} });
   const mob = $('#mobCta'); let roomVis = false;
   new IntersectionObserver(es => { roomVis = es[0].isIntersecting; onScroll(); }, { threshold: .25 }).observe($('#roomWrap'));
   const onScroll = () => { if (!S.id) mob.classList.toggle('hide', roomVis || scrollY < innerHeight * 0.8 || (document.querySelector('.site-footer') && document.querySelector('.site-footer').getBoundingClientRect().top < innerHeight)); };

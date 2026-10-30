@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <script src="/js/perf.js"></script>
+<script>try{if(!sessionStorage.getItem('cz_intro')&&!/[?&]nointro/.test(location.search)&&!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElement.classList.add('intro-on')}catch(e){}</script>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>CHILL ZONE — твоя игровая вселенная в Хасавюрте</title>
 <meta name="description" content="CHILL ZONE — игровое пространство в Хасавюрте: 5 игровых ПК с RTX, PlayStation-зона с ТВ 75″, VR, гоночный руль, аэрохоккей, настольный теннис и футбол. Онлайн-бронирование.">
@@ -15,8 +16,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Unbounded:wght@400;700;800&display=swap" rel="stylesheet">
 <link rel="preload" as="image" href="/img/hero-room.webp" media="(max-width:900px)">
 <link rel="stylesheet" href="/css/app.css">
+<link rel="preload" href="/fonts/InterDisplay-Black.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="/css/intro.css">
 </head>
 <body>
+<script src="/js/intro.js"></script>
 <div class="bg-fx"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div></div>
 
 <!-- ================= HERO ================= -->

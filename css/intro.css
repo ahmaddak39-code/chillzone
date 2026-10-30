@@ -1,0 +1,101 @@
+@font-face{font-family:"CZ Display";src:url(/fonts/InterDisplay-Black.woff) format("woff");font-weight:900;font-display:block}
+/* =========================================================
+   CHILL ZONE — заставка открытия сайта (~3.9 c, один раз за сессию)
+   Всё на transform/opacity: плавно на iPhone. Облегчённый режим — без размытия.
+   ========================================================= */
+#intro{display:none}
+.intro-on #intro{display:block}
+.intro-on,.intro-on body{overflow:hidden}
+.intro-on .hero *,.intro-on .hero *::before,.intro-on .hero *::after{animation-play-state:paused!important}
+.intro-on .room3d{visibility:hidden}
+#intro{position:fixed;inset:0;z-index:1000;background:#020310;overflow:hidden;contain:strict;
+  --cy:#46ecff;--bl:#3d6bff;--vi:#8b5cff;--tq:#19f0c4;--pk:#ff3fb4;
+  --fs:min(30vw,21vh);font-family:"CZ Display","Arial Black",sans-serif}
+@media (min-width:900px){#intro{--fs:min(21vw,29vh)}}
+#intro .in-bg{position:absolute;inset:0;background:
+  radial-gradient(ellipse 70% 45% at 50% 50%,rgba(61,107,255,.22),transparent 70%),
+  radial-gradient(ellipse 50% 35% at 30% 60%,rgba(139,92,255,.18),transparent 70%),
+  radial-gradient(ellipse 50% 35% at 70% 40%,rgba(25,240,196,.10),transparent 70%);
+  opacity:0;animation:inFade .9s .55s ease-out forwards}
+#intro canvas{position:absolute;inset:0;width:100%;height:100%}
+/* 1. неоновая линия */
+#intro .in-line{position:absolute;left:0;top:50%;width:46vw;height:3px;margin-top:-1px;border-radius:2px;
+  background:linear-gradient(90deg,transparent,var(--tq) 30%,#fff 50%,var(--vi) 70%,transparent);
+  box-shadow:0 0 12px var(--cy),0 0 30px var(--bl),0 0 60px var(--vi);transform:translateX(-60vw);
+  animation:inSweep .62s .12s cubic-bezier(.6,0,.2,1) forwards}
+#intro .in-slit{position:absolute;left:0;right:0;top:50%;height:2px;margin-top:-1px;
+  background:linear-gradient(90deg,transparent,rgba(70,236,255,.9) 20%,#fff 50%,rgba(139,92,255,.9) 80%,transparent);
+  box-shadow:0 0 30px rgba(70,236,255,.8),0 0 80px rgba(139,92,255,.7);opacity:0;transform:scaleX(.2);
+  animation:inSlit .9s .6s cubic-bezier(.2,.8,.2,1) forwards}
+/* 2. сцена с логотипом */
+#intro .in-stage{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;perspective:1200px}
+#intro .in-mark{width:calc(var(--fs) * .62);height:calc(var(--fs) * .62);margin-bottom:calc(var(--fs) * .08);opacity:0;
+  filter:drop-shadow(0 0 14px rgba(70,236,255,.8)) drop-shadow(0 0 34px rgba(139,92,255,.7));animation:inMark .7s 1.45s cubic-bezier(.2,.9,.2,1.2) forwards}
+#intro .in-mark svg{width:100%;height:100%;overflow:visible}
+#intro .in-mark path{stroke-dasharray:100;stroke-dashoffset:100;animation:inDraw .9s 1.4s cubic-bezier(.6,0,.2,1) forwards}
+#intro .in-mark .zz{animation-delay:1.65s}
+#intro .in-word{position:relative;display:flex;flex-direction:column;align-items:center;transform:rotateX(18deg) scale(.94);
+  animation:inSettle 1.6s .7s cubic-bezier(.2,.8,.2,1) forwards;transform-style:preserve-3d}
+#intro .in-row{display:flex;line-height:.86;font-weight:900;font-size:var(--fs);letter-spacing:-.01em}
+#intro .in-row+.in-row{margin-top:calc(var(--fs) * .02)}
+#intro .L{position:relative;display:block;color:transparent}
+#intro .L>i{position:absolute;left:0;top:0;font-style:normal}
+/* объём: выдавленная тень под буквой */
+#intro .L .ext{color:#4b35c9;opacity:0;text-shadow:
+  .01em .014em 0 #4630bd,.02em .028em 0 #3f2aae,.03em .042em 0 #37249c,.04em .056em 0 #2f1e88,.05em .07em 0 #271873,.06em .084em 0 #1f135e,.07em .098em 0 #170e4a,
+  .07em .12em .18em rgba(0,0,0,.85),0 0 .4em rgba(91,70,255,.45);animation:inFade .5s calc(1.55s + var(--i) * .03s) forwards}
+/* лицевая сторона из трёх световых частей */
+#intro .L .sh{background:linear-gradient(180deg,#fff 0%,#e4fbff 30%,#7deeff 55%,#6d8bff 78%,#b06cff 100%);-webkit-background-clip:text;background-clip:text;color:transparent;
+  opacity:0;transform:translate(var(--dx),var(--dy)) skewX(-18deg) scaleX(1.6);
+  animation:inShard .78s calc(.72s + var(--i) * .055s) cubic-bezier(.16,1,.3,1) forwards}
+#intro .L .s1{clip-path:inset(0 0 64% 0)}
+#intro .L .s2{clip-path:inset(35% 0 30% 0)}
+#intro .L .s3{clip-path:inset(69% 0 0 0)}
+.full #intro .L .sh{filter:blur(8px);animation-name:inShardBlur}
+/* неоновый контур, вспыхивающий при сборке */
+#intro .L .rim{color:transparent;-webkit-text-stroke:.012em rgba(150,245,255,.95);opacity:0;
+  text-shadow:0 0 .08em rgba(70,236,255,.9),0 0 .25em rgba(139,92,255,.8);animation:inRim 1.1s calc(1.25s + var(--i) * .04s) forwards}
+/* RGB-расслоение, схлопывающееся в логотип */
+#intro .L .rgb{opacity:0;mix-blend-mode:screen}
+#intro .L .rc{color:#00f0ff;animation:inRgbC .5s calc(1.3s + var(--i) * .03s) ease-out forwards}
+#intro .L .rp{color:#ff2fb9;animation:inRgbP .5s calc(1.3s + var(--i) * .03s) ease-out forwards}
+/* блик, проходящий по буквам */
+#intro .in-word::after{content:"";position:absolute;top:-10%;bottom:-10%;left:-30%;width:22%;transform:skewX(-20deg) translateX(-100%);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);mix-blend-mode:overlay;opacity:0;
+  animation:inGlint 1.1s 2.2s ease-in-out forwards}
+/* 3. слоган */
+#intro .in-slogan{margin-top:calc(var(--fs) * .2);font-family:"CZ Display","Manrope",sans-serif;font-weight:900;font-size:max(13px,calc(var(--fs) * .13));letter-spacing:.9em;
+  text-transform:uppercase;color:#d8f6ff;text-shadow:0 0 12px rgba(70,236,255,.8),0 0 30px rgba(139,92,255,.6);opacity:0;white-space:nowrap;
+  animation:inSlogan 1s 1.95s cubic-bezier(.2,.8,.2,1) forwards}
+#intro .in-slogan::before,#intro .in-slogan::after{content:"";display:inline-block;width:2.4em;height:2px;vertical-align:middle;margin:0 .9em .25em 0;
+  background:linear-gradient(90deg,transparent,var(--cy))}
+#intro .in-slogan::after{margin:0 0 .25em 0;background:linear-gradient(90deg,var(--vi),transparent)}
+#intro .in-flash{position:absolute;inset:0;background:radial-gradient(ellipse 60% 40% at 50% 50%,rgba(200,245,255,.9),rgba(139,92,255,.35) 45%,transparent 70%);
+  opacity:0;mix-blend-mode:screen;animation:inFlash .9s 1.5s ease-out forwards;pointer-events:none}
+#intro .in-skip{position:absolute;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));padding:10px 16px;border-radius:999px;border:1px solid rgba(120,150,255,.3);
+  background:rgba(10,14,40,.6);color:#9aa6d6;font:600 13px/1 "Manrope",sans-serif;letter-spacing:.06em;opacity:0;animation:inFade .4s 1s forwards;cursor:pointer}
+/* 4. уход: экран схлопывается в неоновую линию и открывает сайт */
+#intro.out .in-stage{transition:transform .65s cubic-bezier(.6,0,.2,1),opacity .55s ease-in;transform:scale(1.14);opacity:0}
+#intro.out{transition:clip-path .7s .18s cubic-bezier(.7,0,.2,1),opacity .35s .75s;clip-path:inset(50% 0 50% 0);opacity:0}
+#intro{clip-path:inset(0 0 0 0)}
+#intro.out .in-slit{animation:none;opacity:1;transform:none;transition:opacity .3s .55s}
+/* облегчённый режим (телефоны) */
+.lite #intro .in-word::after{display:none}
+.lite #intro .L .rim{text-shadow:0 0 .1em rgba(70,236,255,.9)}
+.lite #intro .in-mark{filter:drop-shadow(0 0 10px rgba(70,236,255,.8))}
+@media (prefers-reduced-motion:reduce){#intro{display:none!important}.intro-on,.intro-on body{overflow:auto}.intro-on .room3d{visibility:visible}}
+@keyframes inFade{to{opacity:1}}
+@keyframes inSweep{0%{transform:translateX(-60vw)}100%{transform:translateX(120vw)}}
+@keyframes inSlit{0%{opacity:0;transform:scaleX(.2)}25%{opacity:1;transform:scaleX(1)}100%{opacity:.18;transform:scaleX(1)}}
+@keyframes inShard{0%{opacity:0;transform:translate(var(--dx),var(--dy)) skewX(-18deg) scaleX(1.6)}35%{opacity:1}100%{opacity:1;transform:none}}
+@keyframes inShardBlur{0%{opacity:0;transform:translate(var(--dx),var(--dy)) skewX(-18deg) scaleX(1.6);filter:blur(8px)}35%{opacity:1}100%{opacity:1;transform:none;filter:blur(0)}}
+@keyframes inRim{0%{opacity:0}20%{opacity:1}100%{opacity:.55}}
+@keyframes inRgbC{0%{opacity:.9;transform:translate(-.06em,.01em)}100%{opacity:0;transform:none}}
+@keyframes inRgbP{0%{opacity:.9;transform:translate(.06em,-.01em)}100%{opacity:0;transform:none}}
+@keyframes inSettle{to{transform:rotateX(0) scale(1)}}
+@keyframes inMark{0%{opacity:0;transform:scale(.6) rotate(-30deg)}100%{opacity:1;transform:none}}
+@keyframes inDraw{to{stroke-dashoffset:0}}
+@keyframes inGlint{0%{opacity:1;transform:skewX(-20deg) translateX(-100%)}100%{opacity:1;transform:skewX(-20deg) translateX(700%)}}
+@keyframes inSlogan{0%{opacity:0;letter-spacing:1.4em;transform:translateY(10px)}100%{opacity:1;letter-spacing:.42em;transform:none}}
+@keyframes inFlash{0%{opacity:0}12%{opacity:1}100%{opacity:0}}
+#intro:not(.go) *,#intro:not(.go) *::before,#intro:not(.go) *::after{animation-play-state:paused!important}
