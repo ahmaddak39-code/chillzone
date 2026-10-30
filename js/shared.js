@@ -17,6 +17,17 @@
       <div class="map"><iframe src="${mapSrc}" title="Карта: ${esc(c.address)}" loading="lazy" allowfullscreen></iframe></div>`;
   }
 
+  // карточка «Ночной пакет» (контакты, цены)
+  function nightCard(s) {
+    const np = s && s.night_package; if (!np || !np.enabled) return '';
+    return `<div class="night-pkg night-card"><div class="np-k">🌙 Ночной пакет CHILL ZONE</div>
+      <div class="np-t">${esc(np.start)}–${esc(np.end)}</div>
+      <div class="np-d">Вся игровая комната только для вашей компании — всю ночь</div>
+      <div class="np-grid"><div><small>Время</small><b>${esc(np.start)}–${esc(np.end)}</b></div><div><small>Стоимость</small><b>${rub(np.price)}</b></div>
+        <div><small>Возраст</small><b>строго ${np.min_age || 18}+</b></div><div><small>Условие</small><b>вся комната</b></div></div>
+      <a class="btn btn-neon btn-sm" href="/#book=room&night=1" style="margin-top:14px">Забронировать ночь</a></div>`;
+  }
+
   const PROMO_ICON = { bonus_time: '⏱️ Бонусное время', discount: '💸 Скидка', giveaway: '🎁 Розыгрыш', student: '🎓 Студентам', group: '👥 Для компаний', info: '⚡ Предложение' };
   function promoCards(list) {
     if (!list || !list.length) return `<div class="empty-state" style="grid-column:1/-1"><h3>Скоро новые акции</h3><p class="muted">Следите за бонусами, скидками и розыгрышами в нашем Instagram.</p><a class="btn btn-neon" href="https://www.instagram.com/chill.zone.game/" target="_blank" rel="noopener">@chill.zone.game</a></div>`;
@@ -45,5 +56,5 @@
     if (it.price_per_hour == null) return '<span class="soon">Цена скоро</span>';
     return `${rub(it.price_per_hour)}<small> / час</small>`;
   }
-  window.CZP = { contactsBlock, promoCards, photoSrc, artHTML, priceLabel };
+  window.CZP = { contactsBlock, promoCards, photoSrc, artHTML, priceLabel, nightCard };
 })();

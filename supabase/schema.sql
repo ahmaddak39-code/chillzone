@@ -317,6 +317,16 @@ alter table topups add column if not exists request_id text;
 alter table topups add column if not exists client_sent_at timestamptz;
 create unique index if not exists topups_request_uq on topups(request_id) where request_id is not null;
 
+-- Бонусная программа: процент и сумма бонуса фиксируются в заявке в момент создания
+alter table topups add column if not exists bonus_percent numeric not null default 0;
+alter table topups add column if not exists bonus_amount int not null default 0;
+alter table topups add column if not exists bonus_off_reason text;
+do $$ begin
+  alter table balance_ops drop constraint if exists balance_ops_kind_check;
+  alter table balance_ops add constraint balance_ops_kind_check check (kind in ('topup','bonus','payment','refund','adjust'));
+end $$;
+create unique index if not exists balance_ops_bonus_uq on balance_ops(topup_id) where kind = 'bonus';
+
 do $$
 declare t text;
 begin
@@ -344,14 +354,24 @@ insert into settings(key, value) values
  ('work_hours', '{"always_open": true, "days": {"1":{"open":"10:00","close":"02:00","closed":false},"2":{"open":"10:00","close":"02:00","closed":false},"3":{"open":"10:00","close":"02:00","closed":false},"4":{"open":"10:00","close":"02:00","closed":false},"5":{"open":"10:00","close":"02:00","closed":false},"6":{"open":"10:00","close":"02:00","closed":false},"7":{"open":"10:00","close":"02:00","closed":false}}}'),
  ('room', '{"base_people": 5, "extra_person_price": 400, "max_people": 5}'),
  ('student_discount_percent', '0'),
- ('night', '{"enabled": true, "start": "22:00", "end": "12:00", "prepay": 500, "min_age": 18, "rules": "Ночное бронирование действует с 22:00 до 12:00. Требуется предоплата. Только для гостей от 18 лет — возьмите с собой документ."}'),
+ ('night', '{"enabled": false, "start": "22:00", "end": "12:00", "prepay": 0, "min_age": 18, "rules": ""}'),
  ('payment', '{"bank": "Т-Банк (бывший Тинькофф)", "phone": "8 928 060-55-50", "whatsapp": "79280605550"}'),
  ('contacts', '{"address": "г. Хасавюрт, ул. Тотурбиева, 137", "phone": "+7 928 553-52-52", "instagram": "chill.zone.game"}'),
  ('admin_idle_minutes', '30'),
  ('telegram', '{"enabled": false, "bot_token": "", "chat_id": ""}'),
  ('notify', '{"whatsapp": "79285535252", "label": "+7 928 553-52-52"}'),
- ('whatsapp_bot', '{"enabled": false, "phone": "79285535252", "apikey": ""}')
+ ('whatsapp_bot', '{"enabled": false, "phone": "79285535252", "apikey": ""}'),
+ ('night_package', '{"enabled": true, "start": "00:00", "end": "07:00", "price": 5000, "min_age": 18}'),
+ ('bonus', '{"enabled": true, "max_percent": 20, "tiers": [
+    {"min": 500, "max": 999, "percent": 0, "enabled": true},
+    {"min": 1000, "max": 2999, "percent": 5, "enabled": true},
+    {"min": 3000, "max": 4999, "percent": 10, "enabled": true},
+    {"min": 5000, "max": 9999, "percent": 15, "enabled": true},
+    {"min": 10000, "max": 19999, "percent": 18, "enabled": true},
+    {"min": 20000, "max": null, "percent": 20, "enabled": true}]}')
 on conflict (key) do nothing;
+-- старые «ночные правила» для отдельного оборудования (предоплата 500 ₽, документы) отключены: ночь — только пакет для всей комнаты
+update settings set value = value || '{"enabled": false, "prepay": 0, "rules": ""}'::jsonb where key = 'night' and coalesce((value->>'enabled')::boolean, false);
 
 insert into equipment(id,name,kind,description,features,price_per_hour,max_players,bookable,photo_url,map_x,map_y,map_rot,sort,link_to) values
  ('pc01','PC 01','pc','Игровой компьютер с видеокартой RTX, геймерское кресло и RGB-подсветка.','{"Видеокарта RTX","Игровое кресло","RGB-подсветка"}',150,1,true,'/img/pcs.webp',560,95,0,1,null),

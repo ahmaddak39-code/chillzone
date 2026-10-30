@@ -43,7 +43,7 @@
     CZ.footer(DATA.settings.contacts);
     CZ.reveal();
     // ссылка вида /#book=pc01
-    const m = location.hash.match(/book=([\w-]+)/); if (m) pick(m[1]);
+    const m = location.hash.match(/book=([\w-]+)/); if (m) { if (/night=1/.test(location.hash) && m[1] === 'room') S.npk = true; pick(m[1]); }
   }
 
   // ---------- статусы ----------
@@ -163,10 +163,16 @@
     const roomS = s.room || {};
     const people = it.kind === 'room' ? `<label class="lbl">Количество человек</label><div class="stepper"><button type="button" data-ppl="-1">−</button><b id="ppl">${S.people}</b><button type="button" data-ppl="1">+</button><span class="muted" style="font-size:13px">${(roomS.max_people || 20) > (roomS.base_people || 5) ? `до ${roomS.base_people || 5} — в базовой цене` : `максимум ${CZ.people(roomS.max_people)}`}</span></div>` : '';
     const stud = +s.student_discount_percent > 0 ? `<label class="check"><input type="checkbox" id="stud" ${S.student ? 'checked' : ''}> Я студент — скидка ${s.student_discount_percent}% (покажу студенческий билет)</label>` : '';
-    return `<label class="lbl">Дата</label><div class="days" id="days">${days}</div>
+    const np = nightPkgOn(it);
+    if (!np) S.npk = false;
+    const mode = np ? `<label class="lbl">Формат брони</label><div class="segs" id="modeSeg"><button data-mode="hour" class="${S.npk ? '' : 'on'}">По часам</button><button data-mode="night" class="${S.npk ? 'on' : ''}">🌙 Ночной пакет · ${rub(np.price)}</button></div>` : '';
+    return `${mode}<label class="lbl">Дата</label><div class="days" id="days">${days}</div>
+      <div id="hourBlock" ${S.npk ? 'hidden' : ''}>
       <label class="lbl">Продолжительность</label><div class="segs" id="durs">${segs}</div>${customSel}
       <div id="bonusNote"></div>
       <label class="lbl">Время начала <span class="dim" style="letter-spacing:0;text-transform:none;font-weight:600">· зелёное — свободно</span></label><div class="slots" id="slots"><div class="slots-empty">Загружаю свободное время…</div></div>
+      </div>
+      <div id="nightPkg"></div>
       ${people}
       <div id="nightBox"></div>
       ${needAcc() ? (CLIENT ? `<label class="lbl">Бронь на</label><div class="note info" style="margin:0">👤 <b>${esc(CLIENT.name)}</b> · ${esc(fmtPh(CLIENT.phone))} <a href="/account" style="margin-left:6px">Личный кабинет →</a></div>` : `<div class="note info">👤 Чтобы забронировать, <b>зарегистрируйтесь в личном кабинете</b> — это займёт минуту. Выбранное оборудование откроется снова.</div>`) : ''}
@@ -195,6 +201,9 @@
     const ph = $('#ph', p); ph.oninput = () => { ph.value = maskPhone(ph.value); validate(); };
     $('#nm', p).oninput = validate;
     $('#bkSubmit', p).onclick = () => submit(it);
+    const ms = $('#modeSeg', p);
+    if (ms) ms.onclick = e => { const b = e.target.closest('[data-mode]'); if (!b) return; S.npk = b.dataset.mode === 'night'; S.start = null; S.quote = null;
+      $$('#modeSeg button', p).forEach(x => x.classList.toggle('on', x === b)); $('#hourBlock', p).hidden = S.npk; renderSlots(); };
     const pc = $('#payCh', p);
     if (pc) {
       pc.onchange = e => { S.pay = e.target.value; $$('label', pc).forEach(l => l.classList.toggle('on', l.querySelector('input').checked)); payNote(); validate(); };
@@ -269,14 +278,38 @@
     if (prev && !prev.closed) { const o = tm(prev.open), c = tm(prev.close); if (o >= c && t < c) return true; }
     return false;
   }
-  function inNight(d) {
-    const n = DATA.settings.night; if (!n || !n.enabled) return false;
-    const p = CZ.parts(d); const t = p.h * 60 + p.mi; const f = tm(n.start), to = tm(n.end);
-    return f < to ? (t >= f && t < to) : (t >= f || t < to);
+  // ночной пакет: только вся комната (настраивается в админке)
+  function nightPkgOn(it) { const np = DATA.settings.night_package; return it && it.kind === 'room' && np && np.enabled ? np : null; }
+  function nightWin(date) {
+    const np = DATA.settings.night_package; const a = CZ.zoned(date, np.start); let b = CZ.zoned(date, np.end);
+    if (b <= a) b = new Date(b.getTime() + 86400000); return [a, b];
+  }
+  function renderNightPkg() {
+    const box = $('#nightPkg'); if (!box) return;
+    if (!S.npk) { box.innerHTML = ''; return; }
+    const np = DATA.settings.night_package; const [a, b] = nightWin(S.date);
+    const now = S.serverNow ? Math.max(Date.now(), S.serverNow) : Date.now();
+    const past = a.getTime() < now - 5 * 60000, clash = S.busy.some(([x, y]) => a.getTime() < y && b.getTime() > x);
+    const prev = CZ.fmtDateStr(CZ.addDays(S.date, -1)), cur = CZ.fmtDateStr(S.date);
+    const keep = $('#age') && $('#age').checked;
+    box.innerHTML = `<div class="night-pkg">
+        <div class="np-k">🌙 Ночной пакет CHILL ZONE</div>
+        <div class="np-t">${esc(np.start)}–${esc(np.end)}</div>
+        <div class="np-d">${tm(np.start) < tm(np.end) ? `${cur} · ночь с ${prev.split(' ')[0]} на ${cur}` : `с ${prev} на ${cur}`}</div>
+        <div class="np-row"><span>Вся игровая комната</span><b>${rub(np.price)}</b></div>
+        <div class="np-age">Строго 18+</div>
+        <div class="np-st ${past || clash ? 'bad' : ''}">${past ? 'Эта ночь уже прошла — выберите другую дату' : clash ? 'На эту ночь комната уже занята — выберите другую дату' : '✓ Свободно'}</div>
+      </div>
+      <label class="check"><input type="checkbox" id="age" ${keep ? 'checked' : ''}> Мне есть ${np.min_age || 18} лет</label>`;
+    const ag = $('#age'); if (ag) ag.onchange = validate;
+    S.start = past || clash ? null : a.toISOString();
+    requote();
   }
 
   function renderSlots() {
     const it = DATA.equipment.find(e => e.id === S.id); const box = $('#slots'); if (!box || !it) return;
+    if (S.npk) return renderNightPkg();
+    if ($('#nightPkg')) $('#nightPkg').innerHTML = '';
     renderBonusNote(it);
     const now = S.serverNow ? Math.max(Date.now(), S.serverNow) : Date.now();
     const occ = (S.dur + bonusFor(it, S.dur)) * 60000;
@@ -298,15 +331,8 @@
     requote();
   }
 
-  function renderNight() {
-    const box = $('#nightBox'); if (!box) return;
-    const n = DATA.settings.night; let night = false;
-    if (S.start) for (let k = 0; k < S.dur; k += 30) if (inNight(new Date(new Date(S.start).getTime() + k * 60000))) { night = true; break; }
-    const keep = $('#age') && $('#age').checked;
-    box.innerHTML = night ? `<div class="note">🌙 <b>Ночное бронирование.</b> ${esc(n.rules || '')}${n.prepay ? `<br>Предоплата: <b>${rub(n.prepay)}</b>, остальное — на месте.` : ''}</div>
-      <label class="check"><input type="checkbox" id="age" ${keep ? 'checked' : ''}> Мне есть ${n.min_age || 18} лет, с правилами ночного бронирования согласен</label>` : '';
-    const a = $('#age'); if (a) a.onchange = validate;
-    S.night = night;
+  function renderNight() {   // почасовые брони — без ночных ограничений; 18+ только у ночного пакета
+    const box = $('#nightBox'); if (box) box.innerHTML = ''; S.night = !!S.npk;
   }
 
   function requote() {
@@ -315,7 +341,7 @@
     if (!S.start) { box.innerHTML = ''; S.quote = null; validate(); return; }
     clearTimeout(S.qTimer);
     S.qTimer = setTimeout(async () => {
-      const req = { equipment_id: S.id, starts_at: S.start, paid_minutes: S.dur, people: S.people, is_student: S.student };
+      const req = S.npk ? { equipment_id: S.id, night_package: true, date: S.date, starts_at: S.start, people: S.people } : { equipment_id: S.id, starts_at: S.start, paid_minutes: S.dur, people: S.people, is_student: S.student };
       try {
         const q = await rpc('quote_booking', req); if (S.start !== req.starts_at || S.id !== req.equipment_id) return;
         S.quote = q; box.innerHTML = sumHTML(q); validate();
@@ -323,7 +349,7 @@
     }, 150);
   }
   function sumHTML(q) {
-    const lines = q.lines.map(l => `<div class="ln"><span>${esc(l.label)} · ${CZ.fmtDur(l.minutes)} × ${rub(l.rate)}/ч</span><span>${rub(Math.round(l.rate * l.minutes / 60))}</span></div>`).join('');
+    const lines = q.lines.map(l => l.fixed ? `<div class="ln"><span>${esc(l.label)} · ${CZ.fmtDur(l.minutes)}</span><span>${rub(l.rate)}</span></div>` : `<div class="ln"><span>${esc(l.label)} · ${CZ.fmtDur(l.minutes)} × ${rub(l.rate)}/ч</span><span>${rub(Math.round(l.rate * l.minutes / 60))}</span></div>`).join('');
     return `<div class="sum">
       <div class="ln"><span>${CZ.fmtDate(q.starts_at)} · начало <b>${CZ.localTime(q.starts_at)}</b> · окончание <b>${CZ.localTime(q.ends_at)}</b></span></div>
       ${lines}
@@ -357,7 +383,7 @@
     const name = $('#nm').value.trim(), phone = $('#ph').value;
     try {
       const b = await rpc('create_booking', { equipment_id: it.id, starts_at: S.start, paid_minutes: S.dur, people: S.people, is_student: S.student,
-        name, phone, age_confirmed: !!($('#age') && $('#age').checked),
+        name, phone, age_confirmed: !!($('#age') && $('#age').checked), ...(S.npk ? { night_package: true, date: S.date } : {}),
         ...(ctoken() ? { ctoken: ctoken() } : {}), pay_method: S.pay === 'balance' && $('#payCh') ? 'balance' : 'transfer' });
       try { localStorage.setItem('cz_name', name); localStorage.setItem('cz_phone', phone); } catch (e) {}
       CZ.saveMyBooking(b);
@@ -405,7 +431,7 @@
     CZ.reveal();
   }
   function renderPromos() { $('#promoGrid').innerHTML = CZP.promoCards((DATA.promotions || []).slice(0, 3)); }
-  function renderContacts() { $('#contactsBox').innerHTML = CZP.contactsBlock(DATA.settings.contacts); }
+  function renderContacts() { $('#contactsBox').innerHTML = CZP.contactsBlock(DATA.settings.contacts); const old = $('#nightCardBox'); if (old) old.remove(); const nc = CZP.nightCard(DATA.settings); if (nc) $('#contactsBox').insertAdjacentHTML('afterend', `<div id="nightCardBox">${nc}</div>`); }
 
   addEventListener('resize', () => placeCam());
   addEventListener('cz-intro-done', () => { try { hero.intro(); } catch (e) {} });

@@ -10,7 +10,7 @@
   const BTABS = [['new', '🆕 Заявки на бронирование', ['awaiting_payment', 'pending_review']], ['pay', '💳 Ожидают проверки оплаты', ['receipt_sent', 'payment_verified']], ['ok', '✅ Подтверждённые', ['confirmed']], ['bad', '✖ Отклонённые', ['rejected', 'cancelled', 'expired']], ['all', 'Все', null]];
   let bTab = 'new';
   const KINDS = { pc: 'Компьютер', ps: 'PlayStation', wheel: 'Руль', vr: 'VR', tennis: 'Настольный теннис', airhockey: 'Аэрохоккей', foosball: 'Настольный футбол', tv: 'Телевизор', room: 'Вся комната', other: 'Другое' };
-  const NAV = [['/admin', '📊', 'Главная'], ['/admin/bookings', '🧾', 'Брони'], ['/admin/calendar', '🗓️', 'Календарь'], ['/admin/equipment', '🖥️', 'Оборудование'], ['/admin/balance', '💳', 'Баланс'], ['/admin/prices', '💰', 'Тарифы'], ['/admin/promos', '🎁', 'Акции'], ['/admin/settings', '⚙️', 'Настройки']];
+  const NAV = [['/admin', '📊', 'Главная'], ['/admin/bookings', '🧾', 'Брони'], ['/admin/calendar', '🗓️', 'Календарь'], ['/admin/equipment', '🖥️', 'Оборудование'], ['/admin/balance', '💳', 'Баланс'], ['/admin/bonus', '🎁', 'Бонусы'], ['/admin/prices', '💰', 'Тарифы'], ['/admin/promos', '🎁', 'Акции'], ['/admin/settings', '⚙️', 'Настройки']];
 
   // ---------- API ----------
   async function api(fn, p = {}) {
@@ -37,7 +37,7 @@
     if (TOKEN && p === '/admin/login') return go('/admin', true);
     if (p === '/admin/login') return loginView();
     shell(p);
-    const v = { '/admin': dashboard, '/admin/bookings': bookings, '/admin/calendar': calendar, '/admin/equipment': equipment, '/admin/prices': prices, '/admin/promos': promos, '/admin/settings': settings, '/admin/balance': balance }[p] || dashboard;
+    const v = { '/admin': dashboard, '/admin/bookings': bookings, '/admin/calendar': calendar, '/admin/equipment': equipment, '/admin/prices': prices, '/admin/promos': promos, '/admin/settings': settings, '/admin/balance': balance, '/admin/bonus': bonusView }[p] || dashboard;
     v();
   }
 
@@ -191,7 +191,7 @@
         <dt>Человек</dt><dd>${b.people}</dd>
         <dt>Стоимость</dt><dd>${rub(b.total)}</dd>
         ${b.due_now !== b.total ? `<dt>Предоплата</dt><dd>${rub(b.due_now)}</dd>` : ''}
-        ${b.is_night ? '<dt>Ночная бронь</dt><dd>да (18+)</dd>' : ''}
+        ${b.is_night ? `<dt>Ночь</dt><dd>${b.quote && b.quote.night_package ? '🌙 Ночной пакет (18+)' : 'да (18+)'}</dd>` : ''}
         ${b.is_student ? '<dt>Студент</dt><dd>да</dd>' : ''}
         ${b.status === 'awaiting_payment' && b.hold_until ? `<dt>Удержание до</dt><dd>${CZ.localTime(b.hold_until)}</dd>` : ''}
         <dt>Создана</dt><dd>${CZ.fmtDate(b.created_at)}, ${CZ.localTime(b.created_at)} · ${b.source === 'admin' ? 'вручную' : 'сайт'}</dd>
@@ -559,7 +559,7 @@
   async function saveSetting(key, value) { await api('admin_settings_save', { key, value }); }
   async function prices() {
     await loadEq(); const S = await loadSettings(); const s = S.settings;
-    const night = s.night || {}, room = s.room || {};
+    const npk = s.night_package || {}, room = s.room || {};
     main().innerHTML = top('Тарифы и цены') + `
       <div class="box"><h2>💰 Цены оборудования, ₽ / час</h2><table class="mini-table"><tbody>${EQ.filter(e => e.kind !== 'tv').map(e => `<tr><td><b>${esc(e.name)}</b></td><td style="width:150px"><input class="inp" type="number" min="0" data-price="${e.id}" value="${e.price_per_hour ?? ''}" placeholder="не задана"></td></tr>`).join('')}</tbody></table>
         <p class="dim" style="font-size:12px">Пустое поле — «Цена скоро», онлайн-бронь для этого оборудования закрыта. Новая цена действует только для новых броней.</p>
@@ -570,14 +570,13 @@
         <div class="fld"><label>Максимум человек</label><input class="inp" type="number" min="1" id="rM" value="${room.max_people ?? 20}"></div>
         <div class="fld"><label>Студенческая скидка, %</label><input class="inp" type="number" min="0" max="100" id="sd" value="${+s.student_discount_percent || 0}"></div>
       </div><p class="dim" style="font-size:12px">Студенческая скидка 0 — отключена. Скидка не суммируется с акциями: применяется большая.</p><button class="btn btn-neon" id="svR">Сохранить</button></div>
-      <div class="box"><h2>🌙 Ночное бронирование</h2><div class="fgrid">
-        <label class="tgl full"><input type="checkbox" id="nE" ${night.enabled ? 'checked' : ''}> Ночные правила включены</label>
-        <div class="fld"><label>Начало ночи</label><input class="inp" type="time" id="nS" value="${night.start || '22:00'}"></div>
-        <div class="fld"><label>Конец ночи</label><input class="inp" type="time" id="nEn" value="${night.end || '12:00'}"></div>
-        <div class="fld"><label>Предоплата, ₽</label><input class="inp" type="number" min="0" id="nP" value="${night.prepay ?? 500}"></div>
-        <div class="fld"><label>Минимальный возраст</label><input class="inp" type="number" min="0" id="nA" value="${night.min_age ?? 18}"></div>
-        <div class="fld full"><label>Правила для клиента</label><textarea class="inp" id="nR">${esc(night.rules || '')}</textarea></div>
-      </div><button class="btn btn-neon" id="svN">Сохранить</button></div>
+      <div class="box"><h2>🌙 Ночной пакет (только вся комната)</h2><div class="fgrid">
+        <label class="tgl full"><input type="checkbox" id="nE" ${npk.enabled ? 'checked' : ''}> Ночной пакет включён</label>
+        <div class="fld"><label>Начало</label><input class="inp" type="time" id="nS" value="${npk.start || '00:00'}"></div>
+        <div class="fld"><label>Окончание</label><input class="inp" type="time" id="nEn" value="${npk.end || '07:00'}"></div>
+        <div class="fld"><label>Стоимость пакета, ₽</label><input class="inp" type="number" min="0" id="nP" value="${npk.price ?? 5000}"></div>
+        <div class="fld"><label>Возраст, от</label><input class="inp" type="number" min="0" id="nA" value="${npk.min_age ?? 18}"></div>
+      </div><p class="dim" style="font-size:12px">Пакет виден клиенту только при выборе всей игровой комнаты. Отдельное оборудование ночью бронируется по обычной почасовой цене, без предоплаты и ограничений.</p><button class="btn btn-neon" id="svN">Сохранить</button></div>
       <div class="box"><h2>⏰ Специальные тарифы <button class="btn btn-sm" id="addT" style="margin-left:auto">+ Тариф</button></h2>
         <p class="dim" style="font-size:13px">Ночные, утренние, дневные, выходные и праздничные цены. Если подходят несколько тарифов — берётся с большим приоритетом.</p>
         <div id="tl">${S.tariffs.length ? S.tariffs.map(t => `<div class="bk-item" data-t="${t.id}"><div><b>${esc(t.name)}</b></div><div class="r">${t.mode === 'price' ? rub(t.value) + '/ч' : '−' + t.value + '%'}</div><div class="m">${tDesc(t)} · ${t.is_active ? '✅ включён' : '⏸ выключен'}</div></div>`).join('') : '<div class="empty">Специальных тарифов пока нет</div>'}</div></div>`;
@@ -586,7 +585,7 @@
       catch (e) { toast(e.message, 'err'); }
     };
     $('#svR').onclick = async () => { try { await saveSetting('room', { base_people: +$('#rB').value, extra_person_price: +$('#rX').value, max_people: +$('#rM').value }); await saveSetting('student_discount_percent', +$('#sd').value || 0); toast('Сохранено', 'ok'); } catch (e) { toast(e.message, 'err'); } };
-    $('#svN').onclick = async () => { try { await saveSetting('night', { enabled: $('#nE').checked, start: $('#nS').value, end: $('#nEn').value, prepay: +$('#nP').value, min_age: +$('#nA').value, rules: $('#nR').value }); toast('Сохранено', 'ok'); } catch (e) { toast(e.message, 'err'); } };
+    $('#svN').onclick = async () => { try { await saveSetting('night_package', { enabled: $('#nE').checked, start: $('#nS').value, end: $('#nEn').value, price: +$('#nP').value, min_age: +$('#nA').value }); toast('Сохранено', 'ok'); } catch (e) { toast(e.message, 'err'); } };
     $('#addT').onclick = () => tariffForm({ name: '', kind: 'night', applies_to: 'all', days: [], dates: [], time_from: '22:00', time_to: '08:00', mode: 'price', value: '', priority: 0, is_active: true });
     $$('[data-t]').forEach(x => x.onclick = () => tariffForm(S.tariffs.find(t => t.id === x.dataset.t)));
   }
@@ -662,7 +661,14 @@
   // ================= БАЛАНС КЛИЕНТОВ =================
   const TST = { awaiting_payment: 'Ожидает подтверждения', receipt_sent: 'Чек на проверке', approved: 'Зачислено', rejected: 'Отклонено', cancelled: 'Отменено клиентом' };
   const TSB = { awaiting_payment: 'pending_review', receipt_sent: 'receipt_sent', approved: 'confirmed', rejected: 'rejected', cancelled: 'cancelled' };
-  const OPK = { topup: 'Пополнение', payment: 'Оплата брони', refund: 'Возврат', adjust: 'Корректировка' };
+  const OPK = { topup: 'Пополнение', bonus: 'Бонус', payment: 'Оплата брони', refund: 'Возврат', adjust: 'Корректировка' };
+  const pct = v => (Math.round(+v * 100) / 100).toString().replace('.', ',') + '%';
+  async function bonusSettings() { try { if (!SETTINGS) await loadSettings(); } catch (e) {} return (SETTINGS && SETTINGS.settings && SETTINGS.settings.bonus) || null; }
+  function bonusCalc(b, amt) {
+    if (!b || !b.enabled || !(amt > 0)) return { p: 0, a: 0 };
+    let p = 0; (b.tiers || []).forEach(t => { if (t.enabled !== false && amt >= +t.min && (t.max == null || amt <= +t.max) && +t.percent > p) p = +t.percent; });
+    p = Math.min(p, b.max_percent ?? 100); return { p, a: Math.floor(amt * p / 100) };
+  }
   const MTH = { cash: 'Наличные', transfer: 'Банковский перевод', other: 'Другой способ', balance: 'С баланса' };
   let balTab = 'topups', topFilter = '';
   async function balance() {
@@ -686,7 +692,7 @@
     $('#bBody').innerHTML = `<div class="box"><div class="filters" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
         <select class="inp" id="tF" style="max-width:260px"><option value="">Все заявки</option>${Object.entries(TST).map(([k, v]) => `<option value="${k}" ${topFilter === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         ${pend ? `<span class="pay claimed" style="align-self:center">🔔 Ждут решения: ${pend}</span>` : ''}</div>
-      <div class="bk-list">${list.length ? list.map(t => `<div class="bk-item" data-tp="${t.id}"><div><span class="c">${esc(t.code)}</span> · <span class="w">${esc(t.name)}</span></div><div class="r">+${rub(t.amount)}</div>
+      <div class="bk-list">${list.length ? list.map(t => `<div class="bk-item" data-tp="${t.id}"><div><span class="c">${esc(t.code)}</span> · <span class="w">${esc(t.name)}</span></div><div class="r">+${rub(t.amount)}${+t.bonus_amount > 0 ? ` <span style="color:#3dffb0;font-size:.8em">+${rub(t.bonus_amount)} бонус</span>` : ''}</div>
         <div class="m">${CZ.fmtDate(t.created_at)}, ${CZ.localTime(t.created_at)} · ${esc(fmtPhone(t.phone))} · ID ${esc(t.client_id || '—')} · баланс ${rub(t.balance)}${t.frozen ? ' · ⛔ заблокирован' : ''}</div>
         <div class="m" style="display:flex;gap:8px;flex-wrap:wrap"><span class="sb ${TSB[t.status]}">${TST[t.status]}</span>${t.created_by === 'admin' ? `<span class="pay verified">в клубе · ${MTH[t.method] || ''}</span>` : t.receipts.length ? '<span class="pay claimed">📎 чек</span>' : '<span class="pay unpaid">через сайт/WhatsApp</span>'}</div></div>`).join('') : '<div class="empty">Заявок на пополнение нет</div>'}</div></div>`;
     $('#tF').onchange = e => { topFilter = e.target.value; topupsView(); };
@@ -696,7 +702,9 @@
     const open = ['awaiting_payment', 'receipt_sent'].includes(t.status);
     const c = modal(`<h2 style="margin:0 0 4px">Пополнение ${esc(t.code)}</h2><span class="sb ${TSB[t.status]}">${TST[t.status]}</span>
       <dl class="kv" style="margin:14px 0"><dt>Клиент</dt><dd>${esc(t.name)}</dd><dt>ID клиента</dt><dd>${esc(t.client_id || '—')}</dd><dt>Телефон</dt><dd><a href="tel:+${t.phone}">${esc(fmtPhone(t.phone))}</a></dd>
-        <dt>Сумма</dt><dd><b style="font-size:20px">${rub(t.amount)}</b></dd><dt>Заявка</dt><dd>${CZ.fmtDate(t.created_at)}, ${CZ.localTime(t.created_at)}${t.created_by === 'admin' ? ' · пополнено в клубе' : ''}</dd>
+        <dt>Сумма пополнения</dt><dd><b style="font-size:20px">${rub(t.amount)}</b></dd>
+        <dt>Бонус</dt><dd>${+t.bonus_amount > 0 ? `${pct(t.bonus_percent)} · <b style="color:#3dffb0">+${rub(t.bonus_amount)}</b>` : t.bonus_off_reason ? 'без бонуса — ' + esc(t.bonus_off_reason) : '0 ₽'}</dd>
+        <dt>Итого на баланс</dt><dd><b>${rub(t.amount + (+t.bonus_amount || 0))}</b></dd><dt>Заявка</dt><dd>${CZ.fmtDate(t.created_at)}, ${CZ.localTime(t.created_at)}${t.created_by === 'admin' ? ' · пополнено в клубе' : ''}</dd>
         <dt>Баланс сейчас</dt><dd>${rub(t.balance)}${t.frozen ? ' · ⛔ операции заблокированы' : ''}</dd>
         ${t.method ? `<dt>Способ оплаты</dt><dd>${MTH[t.method] || t.method}</dd>` : ''}
         ${t.decided_at ? `<dt>Решение</dt><dd>${CZ.fmtDate(t.decided_at)}, ${CZ.localTime(t.decided_at)}${t.admin_note ? ' — ' + esc(t.admin_note) : ''}</dd>` : ''}</dl>
@@ -705,7 +713,7 @@
       <div id="rcBox" style="margin:10px 0"></div>
       ${open ? `<div class="box" style="margin-top:12px">
         <div class="fld"><label>Как поступили деньги</label><select class="inp" id="tM"><option value="transfer">Банковский перевод</option><option value="cash">Наличные</option><option value="other">Другой способ</option></select></div>
-        <label class="tgl" style="margin-top:10px"><input type="checkbox" id="att"> Я проверил: ${rub(t.amount)} действительно поступили</label>
+        <label class="tgl" style="margin-top:10px"><input type="checkbox" id="att"> Я проверил: ${rub(t.amount)} действительно поступили${+t.bonus_amount > 0 ? ` (на баланс зачислится ${rub(t.amount + +t.bonus_amount)} с бонусом)` : ''}</label>
         <input class="inp" id="tNote" placeholder="Комментарий (для отклонения — причина)" maxlength="300" style="margin:10px 0">
         <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-ok" id="tOk" disabled>✅ Подтвердить пополнение</button><button class="btn btn-bad" id="tNo">✖ Отклонить</button></div>
         <p class="dim" style="font-size:12px;margin:8px 0 0">Сообщение клиента в WhatsApp — не доказательство оплаты. Подтверждайте только после проверки поступления денег.</p></div>` : ''}`, c => {
@@ -723,10 +731,48 @@
     });
   }
 
+  // ---------- бонусная система ----------
+  async function bonusView() {
+    await loadSettings(); const b0 = SETTINGS.settings.bonus || { enabled: false, max_percent: 20, tiers: [] };
+    const B = JSON.parse(JSON.stringify(b0)); B.tiers = B.tiers || [];
+    const draw = () => {
+      main().innerHTML = top('Бонусная система') + `
+      <div class="box"><label class="tgl"><input type="checkbox" id="bnE" ${B.enabled ? 'checked' : ''}> Бонусная программа включена</label>
+        <div class="fgrid" style="margin-top:10px"><div class="fld"><label>Максимальный бонус, %</label><input class="inp" type="number" min="0" max="100" step="0.5" id="bnM" value="${B.max_percent ?? 100}"></div></div>
+        <p class="dim" style="font-size:13px">Бонус начисляется вместе с пополнением, только после подтверждения администратором. Изменения применяются к новым заявкам; уже созданные и подтверждённые сохраняют свой процент.</p></div>
+      <div class="box"><h2>Уровни бонуса</h2>
+        <div class="bn-tiers">${B.tiers.map((t, i) => `<div class="bn-tier ${t.enabled === false ? 'off' : ''}">
+          <div class="bn-ord"><button class="btn btn-sm" data-up="${i}" ${i ? '' : 'disabled'}>↑</button><button class="btn btn-sm" data-dn="${i}" ${i < B.tiers.length - 1 ? '' : 'disabled'}>↓</button></div>
+          <div class="fld"><label>От, ₽</label><input class="inp" type="number" min="0" data-f="min" data-i="${i}" value="${t.min}"></div>
+          <div class="fld"><label>До, ₽ (пусто — без ограничения)</label><input class="inp" type="number" min="0" data-f="max" data-i="${i}" value="${t.max ?? ''}"></div>
+          <div class="fld"><label>Бонус, %</label><input class="inp" type="number" min="0" max="100" step="0.5" data-f="percent" data-i="${i}" value="${t.percent}"></div>
+          <label class="tgl"><input type="checkbox" data-en="${i}" ${t.enabled !== false ? 'checked' : ''}> вкл.</label>
+          <button class="btn btn-sm btn-bad" data-del="${i}">🗑</button></div>`).join('') || '<div class="empty">Уровней нет</div>'}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" id="bnAdd">+ Добавить уровень</button><button class="btn btn-neon" id="bnSave">💾 Сохранить</button></div></div>
+      <div class="box"><h2>Проверка расчёта</h2><div class="fgrid"><div class="fld"><label>Сумма пополнения, ₽</label><input class="inp" type="number" id="bnT" value="5000"></div></div><div id="bnR" class="note info"></div></div>`;
+      const test = () => { const a = +$('#bnT').value || 0; const bn = bonusCalc(Object.assign({}, B, { enabled: true }), a); $('#bnR').innerHTML = `Пополнение ${rub(a)} → бонус ${pct(bn.p)} = <b>${rub(bn.a)}</b>, итого <b>${rub(a + bn.a)}</b>${B.enabled ? '' : ' (программа сейчас выключена)'}`; };
+      $('#bnE').onchange = e => { B.enabled = e.target.checked; test(); };
+      $('#bnM').oninput = e => { B.max_percent = +e.target.value; test(); };
+      $$('[data-f]').forEach(x => x.oninput = () => { const t = B.tiers[+x.dataset.i]; t[x.dataset.f] = x.value === '' ? (x.dataset.f === 'max' ? null : 0) : +x.value; test(); });
+      $$('[data-en]').forEach(x => x.onchange = () => { B.tiers[+x.dataset.en].enabled = x.checked; draw(); });
+      $$('[data-del]').forEach(x => x.onclick = () => { if (confirm('Удалить уровень?')) { B.tiers.splice(+x.dataset.del, 1); draw(); } });
+      $$('[data-up]').forEach(x => x.onclick = () => { const i = +x.dataset.up; [B.tiers[i - 1], B.tiers[i]] = [B.tiers[i], B.tiers[i - 1]]; draw(); });
+      $$('[data-dn]').forEach(x => x.onclick = () => { const i = +x.dataset.dn; [B.tiers[i + 1], B.tiers[i]] = [B.tiers[i], B.tiers[i + 1]]; draw(); });
+      $('#bnAdd').onclick = () => { const last = B.tiers[B.tiers.length - 1]; B.tiers.push({ min: last ? (last.max != null ? last.max + 1 : last.min + 10000) : 500, max: null, percent: 0, enabled: true }); draw(); };
+      $('#bnT').oninput = test; test();
+      $('#bnSave').onclick = async () => {
+        for (const t of B.tiers) if (!(t.min >= 0) || !(t.percent >= 0 && t.percent <= 100) || (t.max != null && t.max < t.min)) return toast('Проверьте уровни: «до» не меньше «от», процент от 0 до 100', 'err');
+        try { await saveSetting('bonus', { enabled: B.enabled, max_percent: B.max_percent, tiers: B.tiers }); toast('Бонусная система сохранена', 'ok'); SETTINGS = null; bonusView(); } catch (e) { toast(e.message, 'err'); }
+      };
+    };
+    draw();
+  }
+
   // ---------- ручное пополнение в клубе ----------
   function manualTopup(pre) {
     const rid = 'm-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);   // защита от двойного нажатия
-    let sel = pre;
+    let sel = pre; let BON = null; bonusSettings().then(b => { BON = b; try { prev(); } catch (e) {} });
+    let prev = () => {};
     const c = modal(`<h2 style="margin:0 0 6px">💵 Пополнить баланс клиента</h2><p class="muted" style="margin:0 0 12px">Клиент передал деньги в клубе — сумма зачисляется сразу и записывается в историю.</p>
       <div id="mSel"></div>
       <div id="mFind" ${pre ? 'hidden' : ''}><input class="inp" id="mQ" placeholder="🔎 Имя, телефон или ID (CZ-000123)" autocomplete="off"><div class="bk-list" id="mRes" style="margin-top:8px"></div></div>
@@ -734,13 +780,17 @@
         <div class="fgrid" style="margin-top:12px">
           <div class="fld"><label>Сумма, ₽</label><input class="inp" type="number" inputmode="numeric" id="mA" min="1" placeholder="например 1000"></div>
           <div class="fld"><label>Способ оплаты</label><select class="inp" id="mM"><option value="cash">Наличные</option><option value="transfer">Банковский перевод</option><option value="other">Другой способ</option></select></div>
-          <div class="fld full"><label>Комментарий</label><input class="inp" id="mC" maxlength="300" placeholder="необязательно"></div></div>
+          <div class="fld full"><label>Комментарий</label><input class="inp" id="mC" maxlength="300" placeholder="необязательно"></div>
+          <label class="tgl full" id="mNbL"><input type="checkbox" id="mNb"> Без бонуса для этой операции</label>
+          <div class="fld full" id="mNbR" hidden><label>Причина отключения бонуса (обязательно)</label><input class="inp" id="mNbW" maxlength="200" placeholder="например: возврат долга"></div></div>
         <div class="note info" id="mPrev" style="margin-top:10px"></div>
         <button class="btn btn-ok btn-wide" id="mGo" style="margin-top:10px" disabled>Подтвердить пополнение</button></div>`, c => {
-      const prev = () => {
-        const a = Math.round(+$('#mA', c).value || 0);
-        $('#mPrev', c).innerHTML = sel ? `Клиент: <b>${esc(sel.name)}</b> · ID ${esc(sel.client_id || '—')}<br>Текущий баланс: <b>${rub(sel.balance)}</b><br>Сумма пополнения: <b>${a > 0 ? rub(a) : '—'}</b> · ${MTH[$('#mM', c).value]}<br>Баланс после операции: <b>${rub(sel.balance + (a > 0 ? a : 0))}</b>` : '';
-        $('#mGo', c).disabled = !(sel && a > 0);
+      prev = () => {
+        const a = Math.round(+$('#mA', c).value || 0); const nb = $('#mNb', c).checked;
+        const bn = nb ? { p: 0, a: 0 } : bonusCalc(BON, a);
+        $('#mNbR', c).hidden = !nb;
+        $('#mPrev', c).innerHTML = sel ? `Клиент: <b>${esc(sel.name)}</b> · ID ${esc(sel.client_id || '—')}<br>Текущий баланс: <b>${rub(sel.balance)}</b><br>Сумма пополнения: <b>${a > 0 ? rub(a) : '—'}</b> · ${MTH[$('#mM', c).value]}<br>Бонус: <b style="color:#3dffb0">${nb ? 'отключён' : pct(bn.p) + ' · +' + rub(bn.a)}</b><br>Итого зачисление: <b>${rub((a > 0 ? a : 0) + bn.a)}</b><br>Баланс после операции: <b>${rub(sel.balance + (a > 0 ? a : 0) + bn.a)}</b>` : '';
+        $('#mGo', c).disabled = !(sel && a > 0 && (!nb || $('#mNbW', c).value.trim().length >= 3));
       };
       const choose = a => { sel = a; $('#mSel', c).innerHTML = `<div class="bk-item" style="cursor:default"><div><span class="w">${esc(a.name)}</span>${a.frozen ? ' <span class="sb rejected">⛔ заблокирован</span>' : ''}</div><div class="r">${rub(a.balance)}</div><div class="m">${esc(fmtPhone(a.phone))} · ID ${esc(a.client_id || '—')} <a href="#" id="mChg">изменить</a></div></div>`;
         $('#mFind', c).hidden = true; $('#mForm', c).hidden = false; $('#mChg', c).onclick = e => { e.preventDefault(); sel = null; $('#mSel', c).innerHTML = ''; $('#mFind', c).hidden = false; $('#mForm', c).hidden = true; $('#mQ', c).focus(); }; prev(); $('#mA', c).focus(); };
@@ -749,13 +799,14 @@
         try { const l = await api('admin_accounts', { q }); $('#mRes', c).innerHTML = l.length ? l.slice(0, 20).map(a => `<div class="bk-item" data-pick="${a.id}"><div><span class="w">${esc(a.name)}</span></div><div class="r">${rub(a.balance)}</div><div class="m">${esc(fmtPhone(a.phone))} · ID ${esc(a.client_id || '—')}</div></div>`).join('') : '<div class="empty">Не найдено. Клиент должен сначала зарегистрироваться в личном кабинете на сайте.</div>';
           $$('[data-pick]', c).forEach(x => x.onclick = () => choose(l.find(a => a.id === x.dataset.pick))); } catch (e) { toast(e.message, 'err'); } };
       $('#mQ', c).oninput = () => { clearTimeout(tm); tm = setTimeout(search, 300); };
-      $('#mA', c).oninput = prev; $('#mM', c).onchange = prev;
+      $('#mA', c).oninput = prev; $('#mM', c).onchange = prev; $('#mNb', c).onchange = prev; $('#mNbW', c).oninput = prev;
       $('#mGo', c).onclick = async e => {
         const a = Math.round(+$('#mA', c).value); if (!sel || !(a > 0)) return;
-        if (!confirm(`Зачислить ${rub(a)} (${MTH[$('#mM', c).value].toLowerCase()}) на баланс ${sel.name}?`)) return;
+        const nb = $('#mNb', c).checked, bn = nb ? { p: 0, a: 0 } : bonusCalc(BON, a);
+        if (!confirm(`Зачислить ${rub(a)}${bn.a ? ` + бонус ${pct(bn.p)} (${rub(bn.a)})` : ''} (${MTH[$('#mM', c).value].toLowerCase()}) на баланс ${sel.name}?`)) return;
         e.target.disabled = true;
-        try { const r = await api('admin_account_topup', { id: sel.id, amount: a, method: $('#mM', c).value, comment: $('#mC', c).value, request_id: rid });
-          toast(`Готово: ${rub(r.balance_before)} → ${rub(r.balance)}`, 'ok'); closeModal(); after(); }
+        try { const r = await api('admin_account_topup', { id: sel.id, amount: a, method: $('#mM', c).value, comment: $('#mC', c).value, request_id: rid, no_bonus: nb, bonus_off_reason: $('#mNbW', c).value });
+          toast(`Готово: ${rub(r.balance_before)} → ${rub(r.balance)}${r.bonus ? ` (бонус +${rub(r.bonus)})` : ''}`, 'ok'); closeModal(); after(); }
         catch (er) { toast(er.message, 'err'); if (er.code === 'ALREADY_PROCESSED') { closeModal(); after(); } else e.target.disabled = false; }
       };
       if (!pre) $('#mQ', c).focus();

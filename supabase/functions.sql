@@ -218,10 +218,6 @@ begin
     extra_sum := extra_sum + extra_people * extra_price / 2;
     lines := jsonb_set(lines, array[label || '|' || rate::text],
       to_jsonb(coalesce((lines->>(label || '|' || rate::text))::int, 0) + 30));
-    if coalesce((night->>'enabled')::boolean, false)
-       and _in_window(lt::time, (night->>'start')::time, (night->>'end')::time) then
-      is_night := true;
-    end if;
   end loop;
 
   -- скидки: студенческая или акция (берётся лучшая, не суммируются)
@@ -250,7 +246,6 @@ begin
 
   total := round(base_sum * (100 - disc_pct) / 100) + round(extra_sum);
   due := total;
-  if is_night then due := least(total, coalesce((night->>'prepay')::numeric, total)); end if;
   en := st + make_interval(mins => paid_min + bonus);
 
   return jsonb_build_object(
@@ -264,6 +259,27 @@ begin
     'is_night', is_night, 'night', case when is_night then night else null end,
     'paid_minutes', paid_min, 'starts_at', st, 'ends_at', en,
     'total', total::int, 'due_now', due::int);
+end $$;
+
+-- ---------- Ночной пакет (только вся комната) ----------
+create or replace function _night_window(d date) returns tstzrange
+language sql stable security definer set search_path = public, extensions, pg_temp as $$
+  select tstzrange(st, case when en <= st then en + interval '1 day' else en end)
+  from (select ((d + coalesce((_setting('night_package')->>'start'),'00:00')::time)::timestamp at time zone _tz()) as st,
+               ((d + coalesce((_setting('night_package')->>'end'),'07:00')::time)::timestamp at time zone _tz()) as en) x $$;
+
+create or replace function _night_quote(d date, ppl int) returns jsonb
+language plpgsql stable security definer set search_path = public, extensions, pg_temp as $$
+declare np jsonb := _setting('night_package'); w tstzrange; price int; mins int;
+begin
+  if not coalesce((np->>'enabled')::boolean, false) then raise exception 'NIGHT_DISABLED'; end if;
+  w := _night_window(d); price := coalesce((np->>'price')::int, 5000);
+  mins := (extract(epoch from upper(w) - lower(w)) / 60)::int;
+  return jsonb_build_object('price_set', true, 'night_package', true, 'is_night', true, 'base_rate', price,
+    'lines', jsonb_build_array(jsonb_build_object('label', format('Ночной пакет %s–%s', np->>'start', np->>'end'), 'rate', price, 'minutes', mins, 'fixed', true)),
+    'base_sum', price, 'extra_people', 0, 'extra_person_price', 0, 'extra_sum', 0, 'discount_percent', 0, 'discount_label', null, 'discount_sum', 0,
+    'bonus_minutes', 0, 'bonus_label', null, 'min_age', coalesce((np->>'min_age')::int, 18), 'people', ppl,
+    'paid_minutes', mins, 'starts_at', lower(w), 'ends_at', upper(w), 'total', price, 'due_now', price);
 end $$;
 
 -- Проверка параметров бронирования (общая для сайта и админки)
@@ -353,7 +369,7 @@ begin
         'timezone', _tz(), 'hold_minutes', _setting('hold_minutes'), 'durations', _setting('durations'),
         'custom_duration', _setting('custom_duration'), 'booking_horizon_days', _setting('booking_horizon_days'),
         'work_hours', _setting('work_hours'), 'room', _setting('room'),
-        'student_discount_percent', _setting('student_discount_percent'), 'night', _setting('night'),
+        'student_discount_percent', _setting('student_discount_percent'), 'night', _setting('night'), 'night_package', _setting('night_package'), 'bonus', _setting('bonus'),
         'payment', _setting('payment') - 'whatsapp', 'contacts', _setting('contacts'), 'notify', _setting('notify'),
         'balance', _setting('balance')),
     'features', jsonb_build_object('balance', coalesce((_setting('balance')->>'enabled')::boolean, false),
@@ -402,6 +418,10 @@ end $$;
 create or replace function quote_booking(p jsonb) returns jsonb
 language plpgsql stable security definer set search_path = public, extensions, pg_temp as $$
 begin
+  if coalesce((p->>'night_package')::boolean, false) then
+    if p->>'equipment_id' <> 'room' then raise exception 'NIGHT_ROOM_ONLY'; end if;
+    return _night_quote((p->>'date')::date, coalesce((p->>'people')::int, 1));
+  end if;
   return _quote(p->>'equipment_id', (p->>'starts_at')::timestamptz, (p->>'paid_minutes')::int,
                 coalesce((p->>'people')::int, 1), coalesce((p->>'is_student')::boolean, false));
 end $$;
@@ -413,6 +433,7 @@ declare e equipment; st timestamptz := (p->>'starts_at')::timestamptz; pm int :=
   nm text := btrim(coalesce(p->>'name','')); ph text := _norm_phone(p->>'phone'); q jsonb; b bookings;
   tok text := encode(extensions.gen_random_bytes(24), 'hex'); cd text; cid uuid; hold int := coalesce((_setting('hold_minutes')#>>'{}')::int, 15);
   room jsonb := _setting('room'); pay_bal boolean := coalesce(p->>'pay_method','transfer') = 'balance'; acc client_accounts; has_acc boolean := false;
+  npk boolean := coalesce((p->>'night_package')::boolean, false); horizon int := coalesce((_setting('booking_horizon_days')#>>'{}')::int, 30);
 begin
   perform _expire_holds();
   -- клиент вошёл в аккаунт: бронь привязывается к нему; при оплате с баланса имя и телефон берутся из аккаунта
@@ -429,8 +450,19 @@ begin
     if ppl < 1 or ppl > coalesce((room->>'max_people')::int, 20) then raise exception 'BAD_PEOPLE'; end if;
   elsif e.max_players is not null and (ppl < 1 or ppl > e.max_players) then ppl := least(greatest(ppl,1), e.max_players);
   end if;
-  perform _validate_slot(e, st, pm, false);
-  q := _quote(e.id, st, pm, ppl, stud);
+  if npk then
+    -- ночной пакет: только вся комната, фиксированное время и цена, строго 18+
+    if e.kind <> 'room' then raise exception 'NIGHT_ROOM_ONLY'; end if;
+    if not e.bookable or not e.is_active or e.status <> 'ok' then raise exception 'EQUIPMENT_UNAVAILABLE'; end if;
+    q := _night_quote((p->>'date')::date, ppl);
+    st := (q->>'starts_at')::timestamptz; pm := (q->>'paid_minutes')::int;
+    if st < now() - interval '5 minutes' then raise exception 'TIME_IN_PAST'; end if;
+    if st > now() + make_interval(days => horizon) then raise exception 'TOO_FAR'; end if;
+    if not coalesce((p->>'age_confirmed')::boolean, false) then raise exception 'AGE_REQUIRED'; end if;
+  else
+    perform _validate_slot(e, st, pm, false);
+    q := _quote(e.id, st, pm, ppl, stud);
+  end if;
   if not coalesce((q->>'price_set')::boolean, false) then raise exception 'PRICE_NOT_SET'; end if;
   if (q->>'is_night')::boolean and not coalesce((p->>'age_confirmed')::boolean, false) then raise exception 'AGE_REQUIRED'; end if;
   -- доступно = баланс минус суммы заявок с оплатой с баланса, ещё не подтверждённых админом
@@ -989,13 +1021,20 @@ language plpgsql volatile security definer set search_path = public, extensions,
 declare k text := p->>'key'; v jsonb := p->'value';
 begin
   perform _admin(p);
-  if k not in ('timezone','hold_minutes','durations','custom_duration','booking_horizon_days','work_hours','room','student_discount_percent','night','payment','contacts','admin_idle_minutes','telegram','notify','balance','whatsapp_bot') then
+  if k not in ('timezone','hold_minutes','durations','custom_duration','booking_horizon_days','work_hours','room','student_discount_percent','night','payment','contacts','admin_idle_minutes','telegram','notify','balance','whatsapp_bot','night_package','bonus') then
     raise exception 'BAD_KEY';
   end if;
   if k = 'telegram' and coalesce(v->>'bot_token','') = '' then
     v := v || jsonb_build_object('bot_token', coalesce((select value->>'bot_token' from settings where key='telegram'), ''));
   end if;
   if k = 'telegram' then v := v - 'has_token'; end if;
+  if k = 'bonus' then v := _bonus_validate(v); end if;
+  if k = 'night_package' then
+    if (v->>'start') !~ '^\d{2}:\d{2}$' or (v->>'end') !~ '^\d{2}:\d{2}$' or (v->>'start') = (v->>'end') then raise exception 'BAD_INPUT'; end if;
+    if coalesce((v->>'price')::numeric, -1) < 0 or (v->>'price')::numeric > 1000000 then raise exception 'BAD_INPUT'; end if;
+    v := jsonb_build_object('enabled', coalesce((v->>'enabled')::boolean, false), 'start', v->>'start', 'end', v->>'end',
+                            'price', round((v->>'price')::numeric)::int, 'min_age', greatest(coalesce((v->>'min_age')::int, 18), 0));
+  end if;
   if k = 'whatsapp_bot' then
     if coalesce(v->>'apikey','') = '' then v := v || jsonb_build_object('apikey', coalesce((select value->>'apikey' from settings where key='whatsapp_bot'), '')); end if;
     v := v - 'has_key';
@@ -1138,6 +1177,7 @@ language sql stable security definer set search_path = public, extensions, pg_te
               'booking_code', (select code from bookings where id = o.booking_id)) order by o.id desc), '[]'::jsonb)
             from (select * from balance_ops where account_id = a.id order by id desc limit 200) o),
     'topups', (select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'code', t.code, 'amount', t.amount, 'status', t.status, 'created_at', t.created_at, 'admin_note', t.admin_note, 'method', t.method, 'created_by', t.created_by,
+              'bonus_percent', t.bonus_percent, 'bonus_amount', t.bonus_amount,
               'has_receipt', exists(select 1 from topup_receipts r where r.topup_id = t.id)) order by t.created_at desc), '[]'::jsonb)
             from (select * from topups where account_id = a.id order by created_at desc limit 50) t),
     'bookings', (select coalesce(jsonb_agg(jsonb_build_object('code', b.code, 'equipment_name', b.equipment_name, 'starts_at', b.starts_at, 'ends_at', b.ends_at,
@@ -1145,7 +1185,7 @@ language sql stable security definer set search_path = public, extensions, pg_te
               'can_cancel', b.status = 'awaiting_payment' or (b.payment_status = 'balance_pending' and b.status = 'pending_review'),
               'refund_preview', null::int) order by b.starts_at desc), '[]'::jsonb)
             from (select * from bookings where account_id = a.id order by starts_at desc limit 50) b),
-    'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'balance_settings', _setting('balance'))
+    'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'balance_settings', _setting('balance'), 'bonus_settings', _setting('bonus'))
 $$;
 
 -- =====================================================================
@@ -1195,9 +1235,55 @@ language plpgsql volatile security definer set search_path = public, extensions,
 declare a client_accounts;
 begin a := _client(p); return _client_public(a); end $$;
 
+
+-- ---------- Бонусная программа ----------
+create or replace function _bonus_validate(v jsonb) returns jsonb
+language plpgsql immutable as $$
+declare t jsonb; out_t jsonb := '[]'::jsonb; mn numeric; mx numeric; pc numeric; maxp numeric := coalesce((v->>'max_percent')::numeric, 100);
+begin
+  if jsonb_typeof(v->'tiers') <> 'array' or jsonb_array_length(v->'tiers') > 30 then raise exception 'BAD_INPUT'; end if;
+  if maxp < 0 or maxp > 100 then raise exception 'BAD_INPUT'; end if;
+  for t in select * from jsonb_array_elements(v->'tiers') loop
+    mn := (t->>'min')::numeric; mx := nullif(t->>'max','')::numeric; pc := (t->>'percent')::numeric;
+    if mn is null or mn < 0 or pc is null or pc < 0 or pc > 100 or (mx is not null and mx < mn) then raise exception 'BAD_INPUT'; end if;
+    out_t := out_t || jsonb_build_array(jsonb_build_object('min', round(mn)::int, 'max', case when mx is null then null else round(mx)::int end,
+                                                           'percent', pc, 'enabled', coalesce((t->>'enabled')::boolean, true)));
+  end loop;
+  return jsonb_build_object('enabled', coalesce((v->>'enabled')::boolean, false), 'max_percent', maxp, 'tiers', out_t);
+end $$;
+
+-- процент и сумма бонуса для суммы пополнения по действующей шкале (подходящий включённый уровень с наибольшим процентом, но не выше максимума)
+create or replace function _bonus_for(amt int) returns jsonb
+language plpgsql stable security definer set search_path = public, extensions, pg_temp as $$
+declare b jsonb := _setting('bonus'); t jsonb; pc numeric := 0;
+begin
+  if b is null or not coalesce((b->>'enabled')::boolean, false) or amt is null then return jsonb_build_object('percent', 0, 'amount', 0); end if;
+  for t in select * from jsonb_array_elements(coalesce(b->'tiers','[]'::jsonb)) loop
+    if coalesce((t->>'enabled')::boolean, true) and amt >= (t->>'min')::numeric
+       and (nullif(t->>'max','') is null or amt <= (t->>'max')::numeric) and (t->>'percent')::numeric > pc then
+      pc := (t->>'percent')::numeric;
+    end if;
+  end loop;
+  pc := least(pc, coalesce((b->>'max_percent')::numeric, 100));
+  return jsonb_build_object('percent', pc, 'amount', floor(amt * pc / 100)::int);
+end $$;
+
+-- зачисление подтверждённого пополнения: основная сумма + бонус (две записи в истории, одна транзакция)
+create or replace function _credit_topup(t topups, how text) returns int
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare nb int; m text := current_setting('cz.op_method', true); c text := current_setting('cz.op_comment', true);
+begin
+  nb := _balance_move(t.account_id, t.amount, 'topup', format('Пополнение %s (%s)', t.code, how), 'admin', null, t.id);
+  if coalesce(t.bonus_amount, 0) > 0 then
+    perform set_config('cz.op_method', coalesce(m, ''), true); perform set_config('cz.op_comment', coalesce(c, ''), true);
+    nb := _balance_move(t.account_id, t.bonus_amount, 'bonus', format('Бонус %s%% к пополнению %s', rtrim(to_char(t.bonus_percent, 'FM990.##'), '.'), t.code), 'admin', null, t.id);
+  end if;
+  return nb;
+end $$;
+
 create or replace function client_topup_create(p jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
-declare a client_accounts; amt int := (p->>'amount')::int; s jsonb := coalesce(_setting('balance'), '{}'); t topups; cd text;
+declare a client_accounts; amt int := (p->>'amount')::int; s jsonb := coalesce(_setting('balance'), '{}'); t topups; cd text; bn jsonb;
 begin
   a := _client(p);
   if not coalesce((s->>'enabled')::boolean, true) then raise exception 'BALANCE_DISABLED'; end if;
@@ -1205,9 +1291,11 @@ begin
   if amt is null or amt < coalesce((s->>'min_topup')::int, 100) or amt > coalesce((s->>'max_topup')::int, 50000) then raise exception 'BAD_AMOUNT'; end if;
   if (select count(*) from topups where account_id = a.id and status in ('awaiting_payment','receipt_sent')) >= 3 then raise exception 'TOO_MANY_PENDING'; end if;
   loop cd := 'TP-' || _rand_code(6); exit when not exists (select 1 from topups where code = cd); end loop;
-  insert into topups(code, account_id, amount) values (cd, a.id, amt) returning * into t;
-  perform _audit('client', null, 'topup_created', jsonb_build_object('code', cd, 'amount', amt, 'phone', a.phone));
-  perform _notify('topup_new', null, format(E'💰 Заявка на пополнение баланса %s\nКлиент: %s, +%s (ID %s)\nСумма: %s ₽\nСтатус: ожидает подтверждения', cd, a.name, a.phone, _client_id(a.client_no), amt));
+  bn := _bonus_for(amt);   -- бонус фиксируется в заявке по шкале на момент создания
+  insert into topups(code, account_id, amount, bonus_percent, bonus_amount) values (cd, a.id, amt, (bn->>'percent')::numeric, (bn->>'amount')::int) returning * into t;
+  perform _audit('client', null, 'topup_created', jsonb_build_object('code', cd, 'amount', amt, 'phone', a.phone, 'bonus_percent', bn->'percent', 'bonus', bn->'amount'));
+  perform _notify('topup_new', null, format(E'💰 Заявка на пополнение баланса %s\nКлиент: %s, +%s (ID %s)\nСумма: %s ₽%s\nСтатус: ожидает подтверждения', cd, a.name, a.phone, _client_id(a.client_no), amt,
+    case when t.bonus_amount > 0 then format(E'\nБонус %s%%: +%s ₽ · итого %s ₽', rtrim(to_char(t.bonus_percent,'FM990.##'), '.'), t.bonus_amount, amt + t.bonus_amount) else '' end));
   return jsonb_build_object('topup', to_jsonb(t), 'client_id', _client_id(a.client_no), 'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'));
 end $$;
 
@@ -1250,6 +1338,7 @@ begin
   return (select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'code', t.code, 'amount', t.amount, 'status', t.status, 'created_at', t.created_at, 'decided_at', t.decided_at,
       'admin_note', t.admin_note, 'account_id', a.id, 'name', a.name, 'phone', a.phone, 'balance', a.balance, 'frozen', a.frozen,
       'client_id', _client_id(a.client_no), 'method', t.method, 'created_by', t.created_by,
+      'bonus_percent', t.bonus_percent, 'bonus_amount', t.bonus_amount, 'bonus_off_reason', t.bonus_off_reason,
       'receipts', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'mime', r.mime) order by r.created_at), '[]'::jsonb) from topup_receipts r where r.topup_id = t.id))
     order by (t.status in ('receipt_sent','awaiting_payment')) desc, t.created_at desc), '[]'::jsonb)
     from (select * from topups where (nullif(p->>'status','') is null or status = p->>'status') order by created_at desc limit 300) t join client_accounts a on a.id = t.account_id);
@@ -1278,10 +1367,11 @@ begin
     if not coalesce((p->>'attest')::boolean, false) then raise exception 'ATTEST_REQUIRED'; end if;
     perform set_config('cz.op_method', coalesce(nullif(p->>'method',''), 'transfer'), true);
     perform set_config('cz.op_comment', coalesce(left(p->>'note', 300), ''), true);
-    nb := _balance_move(t.account_id, t.amount, 'topup', format('Пополнение %s (заявка с сайта)', t.code), 'admin', null, t.id);
+    nb := _credit_topup(t, 'заявка с сайта');
     update topups set status = 'approved', decided_at = now(), updated_at = now(), admin_note = left(p->>'note', 300), method = coalesce(nullif(p->>'method',''), 'transfer') where id = t.id returning * into t;
-    perform _audit('admin', null, 'topup_approved', jsonb_build_object('code', t.code, 'amount', t.amount, 'phone', a.phone, 'balance_after', nb));
-    insert into notifications(event, message, seen) values ('topup_approved', format(E'✅ Пополнение %s подтверждено: +%s ₽\nКлиент: %s, +%s\nБаланс: %s ₽', t.code, t.amount, a.name, a.phone, nb), true);
+    perform _audit('admin', null, 'topup_approved', jsonb_build_object('code', t.code, 'amount', t.amount, 'bonus', t.bonus_amount, 'bonus_percent', t.bonus_percent, 'phone', a.phone, 'balance_after', nb));
+    insert into notifications(event, message, seen) values ('topup_approved', format(E'✅ Пополнение %s подтверждено: +%s ₽%s\nКлиент: %s, +%s\nБаланс: %s ₽', t.code, t.amount,
+      case when t.bonus_amount > 0 then format(' + бонус %s ₽', t.bonus_amount) else '' end, a.name, a.phone, nb), true);
   elsif act = 'reject' then
     update topups set status = 'rejected', decided_at = now(), updated_at = now(), admin_note = left(p->>'note', 300) where id = t.id returning * into t;
     perform _audit('admin', null, 'topup_rejected', jsonb_build_object('code', t.code, 'amount', t.amount, 'phone', a.phone, 'note', p->>'note'));
@@ -1362,6 +1452,7 @@ create or replace function admin_account_topup(p jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
 declare a client_accounts; amt int := (p->>'amount')::int; m text := coalesce(nullif(p->>'method',''), 'cash');
   cmt text := left(btrim(coalesce(p->>'comment','')), 300); rid text := nullif(btrim(coalesce(p->>'request_id','')), ''); t topups; cd text; nb int; before int;
+  nob boolean := coalesce((p->>'no_bonus')::boolean, false); why text := left(btrim(coalesce(p->>'bonus_off_reason','')), 300); bn jsonb;
 begin
   perform _admin(p);
   if amt is null or amt <= 0 or amt > 100000 then raise exception 'BAD_AMOUNT'; end if;
@@ -1370,20 +1461,22 @@ begin
   select * into a from client_accounts where id = (p->>'id')::uuid for update;
   if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
   before := a.balance;
+  if nob and length(why) < 3 then raise exception 'REASON_REQUIRED'; end if;
+  bn := case when nob then '{"percent":0,"amount":0}'::jsonb else _bonus_for(amt) end;
   loop cd := 'TP-' || _rand_code(6); exit when not exists (select 1 from topups where code = cd); end loop;
   begin
-    insert into topups(code, account_id, amount, status, admin_note, decided_at, method, created_by, request_id)
-    values (cd, a.id, amt, 'approved', nullif(cmt,''), now(), m, 'admin', rid) returning * into t;
+    insert into topups(code, account_id, amount, status, admin_note, decided_at, method, created_by, request_id, bonus_percent, bonus_amount, bonus_off_reason)
+    values (cd, a.id, amt, 'approved', nullif(cmt,''), now(), m, 'admin', rid, (bn->>'percent')::numeric, (bn->>'amount')::int, case when nob then why end) returning * into t;
   exception when unique_violation then raise exception 'ALREADY_PROCESSED';
   end;
   perform set_config('cz.op_method', m, true); perform set_config('cz.op_comment', cmt, true);
-  nb := _balance_move(a.id, amt, 'topup', format('Пополнение в клубе %s (%s)', cd,
-          case m when 'cash' then 'наличные' when 'transfer' then 'банковский перевод' else 'другой способ' end), 'admin', null, t.id);
-  perform _audit('admin', null, 'manual_topup', jsonb_build_object('code', cd, 'phone', a.phone, 'amount', amt, 'method', m, 'comment', cmt, 'balance_before', before, 'balance_after', nb));
+  nb := _credit_topup(t, 'в клубе, ' || case m when 'cash' then 'наличные' when 'transfer' then 'банковский перевод' else 'другой способ' end);
+  perform _audit('admin', null, 'manual_topup', jsonb_build_object('code', cd, 'phone', a.phone, 'amount', amt, 'bonus', t.bonus_amount, 'bonus_percent', t.bonus_percent,
+    'bonus_off_reason', t.bonus_off_reason, 'method', m, 'comment', cmt, 'balance_before', before, 'balance_after', nb));
   insert into notifications(event, message, seen) values ('topup_manual',
     format(E'💵 Ручное пополнение %s: +%s ₽ (%s)\nКлиент: %s, +%s (ID %s)\nБаланс: %s → %s ₽', cd, amt,
       case m when 'cash' then 'наличные' when 'transfer' then 'перевод' else 'другое' end, a.name, a.phone, _client_id(a.client_no), before, nb), true);
-  return jsonb_build_object('ok', true, 'code', cd, 'balance_before', before, 'balance', nb);
+  return jsonb_build_object('ok', true, 'code', cd, 'balance_before', before, 'balance', nb, 'bonus', t.bonus_amount, 'bonus_percent', t.bonus_percent);
 end $$;
 
 -- Общая история операций с балансом (все клиенты)
@@ -1396,7 +1489,7 @@ begin
     select jsonb_build_object('id', o.id, 'at', o.created_at, 'kind', o.kind, 'amount', o.amount, 'balance_before', o.balance_after - o.amount,
       'balance_after', o.balance_after, 'method', o.method, 'comment', o.comment, 'description', o.description, 'actor', o.actor,
       'admin', u.username, 'account_id', a.id, 'name', a.name, 'phone', a.phone, 'client_id', _client_id(a.client_no),
-      'booking_code', b.code, 'topup_code', t.code) x
+      'booking_code', b.code, 'topup_code', t.code, 'bonus_percent', t.bonus_percent) x
     from balance_ops o join client_accounts a on a.id = o.account_id
       left join admin_users u on u.id = o.admin_id left join bookings b on b.id = o.booking_id left join topups t on t.id = o.topup_id
     where (k is null or o.kind = k)

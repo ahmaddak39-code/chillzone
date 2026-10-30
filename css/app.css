@@ -460,3 +460,23 @@ select.inp option{background:#0e1435}
 .ppl-max.sm{margin:0 0 12px;align-self:flex-start;font-size:12px}
 .wa-big{margin:18px 0 6px;padding:18px;border-radius:20px;border:1px solid rgba(37,211,102,.45);background:linear-gradient(160deg,rgba(10,50,35,.45),rgba(10,14,46,.6));box-shadow:0 0 30px rgba(37,211,102,.12)}
 .wa-big .btn-wa{min-height:58px;font-size:15px;letter-spacing:.06em}
+/* ===== Ночной пакет ===== */
+.night-pkg{position:relative;overflow:hidden;margin:14px 0 10px;padding:20px 22px;border-radius:20px;border:1px solid rgba(139,92,255,.5);
+  background:radial-gradient(ellipse 80% 100% at 100% 0%,rgba(80,60,255,.28),transparent 60%),linear-gradient(160deg,rgba(18,16,60,.95),rgba(8,10,32,.95));box-shadow:0 0 30px rgba(110,80,255,.2)}
+.night-pkg .np-k{font-weight:800;letter-spacing:.14em;text-transform:uppercase;font-size:12px;color:#b9a8ff}
+.night-pkg .np-t{font-family:var(--f-display);font-size:34px;margin:6px 0 2px}
+.night-pkg .np-d{color:var(--muted,#9aa6d6);font-size:14px}
+.night-pkg .np-row{display:flex;justify-content:space-between;gap:10px;margin-top:12px;font-weight:700}
+.night-pkg .np-row b{font-family:var(--f-display);font-size:22px}
+.night-pkg .np-age{display:inline-block;margin-top:10px;padding:4px 10px;border-radius:999px;border:1px solid rgba(255,90,140,.6);color:#ff9cc0;font-weight:800;font-size:13px}
+.night-pkg .np-st{margin-top:10px;font-weight:700;color:#3dffb0;font-size:14px}.night-pkg .np-st.bad{color:#ff8fb8}
+.night-card{margin-top:22px}
+.night-card .np-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px}
+.night-card .np-grid div{padding:12px 14px;border-radius:14px;background:rgba(20,24,70,.6);border:1px solid var(--line)}
+.night-card .np-grid small{display:block;color:var(--muted,#9aa6d6);font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:700}
+.night-card .np-grid b{font-family:var(--f-display);font-size:20px}
+.tp-bonus{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:12px 14px;margin:0 0 10px;border-radius:14px;background:rgba(61,255,176,.06);border:1px solid rgba(61,255,176,.28);font-size:14px}
+.tp-bonus b{text-align:right}.tp-bonus b:last-child{font-size:17px}.tp-bonus span:nth-last-child(2){font-weight:800}
+.tp-bonus .plus,.op .plus{color:#3dffb0}
+.bn-scale{margin-top:10px;font-size:14px}.bn-scale summary{cursor:pointer;font-weight:700;color:#b9e7ff}
+.bn-scale div div{display:flex;justify-content:space-between;padding:6px 2px;border-bottom:1px solid var(--line)}
