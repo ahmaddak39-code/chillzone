@@ -173,9 +173,9 @@ section{position:relative}
 .r3-label>div{transform:translate(-50%,-100%) rotateZ(calc(var(--rz) * -1 - var(--or, 0deg))) rotateX(calc(var(--rx) * -1));transform-origin:50% 100%;white-space:nowrap;font-family:var(--f-display);font-size:13px;font-weight:700;letter-spacing:.06em;padding:6px 10px;border-radius:9px;background:rgba(6,8,26,.82);border:1px solid var(--st,var(--ok));box-shadow:0 0 14px color-mix(in srgb,var(--st,var(--ok)) 70%,transparent);display:flex;align-items:center;gap:7px}
 .r3-label>div::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--st,var(--ok));box-shadow:0 0 8px var(--st,var(--ok))}
 .r3-obj[data-st=busy] .r3-label>div,.r3-obj[data-st=off] .r3-label>div{color:#cfd3e6}
-.screen{background:linear-gradient(135deg,#1b6dff,#22e3ff 40%,#8b5cff 70%,#ff3fb4);background-size:300% 300%;animation:screenflow 7s ease infinite;box-shadow:0 0 22px rgba(34,227,255,.6)}
+.screen{background:linear-gradient(135deg,#1b6dff,#22e3ff 40%,#8b5cff 70%,#ff3fb4)!important;background-size:300% 300%!important;animation:screenflow 7s ease infinite;box-shadow:0 0 22px rgba(34,227,255,.6)}
 @keyframes screenflow{50%{background-position:100% 100%}}
-.rgb{background:linear-gradient(90deg,#ff3fb4,#8b5cff,#22e3ff,#19f0c4,#ff3fb4);background-size:300% 100%;animation:rgbflow 3s linear infinite}
+.rgb{background:linear-gradient(90deg,#ff3fb4,#8b5cff,#22e3ff,#19f0c4,#ff3fb4)!important;background-size:300% 100%!important;animation:rgbflow 3s linear infinite}
 @keyframes rgbflow{to{background-position:300% 0}}
 .room-wrap{position:relative;height:min(78vh,720px);min-height:460px;border-radius:26px;border:1px solid var(--line);background:radial-gradient(ellipse at 50% 30%,rgba(61,107,255,.18),transparent 70%),rgba(8,10,30,.6);overflow:hidden}
 .room-tools{position:absolute;z-index:5;left:14px;top:14px;right:14px;display:flex;gap:8px;flex-wrap:wrap;pointer-events:none}
