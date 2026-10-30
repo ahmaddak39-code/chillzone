@@ -114,7 +114,7 @@ create table if not exists bookings (
   total int not null,
   due_now int not null,
   status text not null check (status in ('awaiting_payment','receipt_sent','pending_review','payment_verified','confirmed','rejected','cancelled','expired')),
-  payment_status text not null default 'unpaid' check (payment_status in ('unpaid','claimed','verified','onsite')),
+  payment_status text not null default 'unpaid' check (payment_status in ('unpaid','claimed','verified','onsite','balance')),
   hold_until timestamptz,
   source text not null default 'site' check (source in ('site','admin')),
   comment text,
@@ -220,6 +220,103 @@ begin
     end if;
   end loop;
 end $$;
+
+
+-- =====================================================================
+-- ЛИЧНЫЙ БАЛАНС КЛИЕНТА
+-- =====================================================================
+create table if not exists client_accounts (
+  id uuid primary key default gen_random_uuid(),
+  phone text unique not null,
+  name text not null,
+  password_hash text not null,
+  balance int not null default 0 check (balance >= 0),          -- нельзя уйти в минус
+  frozen boolean not null default false,                          -- блокировка операций
+  frozen_reason text,
+  created_at timestamptz not null default now(),
+  last_login_at timestamptz
+);
+create table if not exists client_sessions (
+  token_hash text primary key,
+  account_id uuid not null references client_accounts(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  last_seen timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+create table if not exists client_login_attempts (
+  id bigserial primary key,
+  phone text not null,
+  ok boolean not null,
+  at timestamptz not null default now()
+);
+create index if not exists client_login_attempts_idx on client_login_attempts(phone, at);
+
+create table if not exists topups (
+  id uuid primary key default gen_random_uuid(),
+  code text unique not null,
+  account_id uuid not null references client_accounts(id),
+  amount int not null check (amount > 0),
+  status text not null default 'awaiting_payment' check (status in ('awaiting_payment','receipt_sent','approved','rejected','cancelled')),
+  admin_note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+create index if not exists topups_account_idx on topups(account_id, created_at);
+
+-- Чеки пополнений. Хеш файла уникален среди всех чеков — один и тот же чек нельзя засчитать дважды.
+create table if not exists topup_receipts (
+  id uuid primary key default gen_random_uuid(),
+  topup_id uuid not null references topups(id) on delete cascade,
+  mime text not null,
+  data text not null,
+  size_bytes int not null,
+  file_hash text not null,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists topup_receipts_hash_uq on topup_receipts(file_hash);
+alter table receipts add column if not exists file_hash text;
+
+-- Журнал всех движений денег. Уникальные индексы не дают дважды зачислить пополнение,
+-- дважды списать за одну бронь или дважды вернуть деньги за одну бронь.
+create table if not exists balance_ops (
+  id bigserial primary key,
+  account_id uuid not null references client_accounts(id),
+  kind text not null check (kind in ('topup','payment','refund','adjust')),
+  amount int not null check (amount <> 0),
+  balance_after int not null check (balance_after >= 0),
+  booking_id uuid references bookings(id),
+  topup_id uuid references topups(id),
+  description text not null,
+  actor text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists balance_ops_account_idx on balance_ops(account_id, created_at);
+create unique index if not exists balance_ops_topup_uq on balance_ops(topup_id) where kind = 'topup';
+create unique index if not exists balance_ops_payment_uq on balance_ops(booking_id) where kind = 'payment';
+create unique index if not exists balance_ops_refund_uq on balance_ops(booking_id) where kind = 'refund';
+
+alter table bookings add column if not exists account_id uuid references client_accounts(id);
+alter table bookings add column if not exists refunded int not null default 0;
+do $$ begin
+  alter table bookings drop constraint if exists bookings_payment_status_check;
+  alter table bookings add constraint bookings_payment_status_check check (payment_status in ('unpaid','claimed','verified','onsite','balance'));
+end $$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['client_accounts','client_sessions','client_login_attempts','topups','topup_receipts','balance_ops'] loop
+    execute format('alter table %I enable row level security', t);
+    execute format('revoke all on table %I from public', t);
+    if exists (select 1 from pg_roles where rolname='anon') then execute format('revoke all on table %I from anon', t); end if;
+    if exists (select 1 from pg_roles where rolname='authenticated') then execute format('revoke all on table %I from authenticated', t); end if;
+  end loop;
+end $$;
+
+insert into settings(key, value) values
+ ('balance', '{"enabled": true, "presets": [500, 1000, 2000, 3000], "min_topup": 100, "max_topup": 50000, "refund_full_hours": 2, "refund_late_percent": 0}')
+on conflict (key) do nothing;
 
 -- =====================================================================
 -- Начальные данные

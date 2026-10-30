@@ -55,6 +55,30 @@ language sql stable security definer set search_path = public, extensions, pg_te
     b.total, case when b.due_now <> b.total then format(' (предоплата %s ₽)', b.due_now) else '' end,
     _status_ru(b.status)) $$;
 
+-- Сумма возврата при отмене клиентом по правилам из настроек
+create or replace function _refund_amount(b bookings) returns int
+language plpgsql stable security definer set search_path = public, extensions, pg_temp as $$
+declare s jsonb := coalesce(_setting('balance'), '{}'); full_h numeric := coalesce((s->>'refund_full_hours')::numeric, 2); late int := coalesce((s->>'refund_late_percent')::int, 0); paid int;
+begin
+  select -coalesce(sum(amount),0) into paid from balance_ops where booking_id = b.id and kind = 'payment';
+  if paid <= 0 then return 0; end if;
+  if b.starts_at - now() >= make_interval(secs => full_h * 3600) then return paid; end if;
+  return floor(paid * late / 100.0)::int;
+end $$;
+
+-- Возврат за бронь на баланс (один раз на бронь)
+create or replace function _refund_booking(b bookings, amt int, why text, actor text) returns int
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+begin
+  if b.account_id is null or amt <= 0 then return 0; end if;
+  if exists (select 1 from balance_ops where booking_id = b.id and kind = 'refund') then return 0; end if;
+  perform _balance_move(b.account_id, amt, 'refund', format('Возврат за бронь %s (%s)', b.code, why), actor, b.id, null);
+  update bookings set refunded = amt where id = b.id;
+  return amt;
+end $$;
+
+
+
 -- Уведомление: всегда в админ-панели; в Telegram — только если интеграция включена и pg_net подключён.
 create or replace function _notify(ev text, bid uuid, msg text) returns void
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
@@ -273,7 +297,8 @@ language sql stable security definer set search_path = public, extensions, pg_te
     'status', b.status, 'status_ru', _status_ru(b.status), 'payment_status', b.payment_status,
     'hold_until', b.hold_until, 'created_at', b.created_at, 'server_now', now(),
     'has_receipt', exists(select 1 from receipts r where r.booking_id = b.id),
-    'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'))
+    'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'refunded', b.refunded,
+    'refund_preview', case when b.payment_status = 'balance' and b.status = 'confirmed' and b.starts_at > now() then _refund_amount(b) end)
 $$;
 
 -- =====================================================================
@@ -300,7 +325,9 @@ begin
         'custom_duration', _setting('custom_duration'), 'booking_horizon_days', _setting('booking_horizon_days'),
         'work_hours', _setting('work_hours'), 'room', _setting('room'),
         'student_discount_percent', _setting('student_discount_percent'), 'night', _setting('night'),
-        'payment', _setting('payment') - 'whatsapp', 'contacts', _setting('contacts'), 'notify', _setting('notify')),
+        'payment', _setting('payment') - 'whatsapp', 'contacts', _setting('contacts'), 'notify', _setting('notify'),
+        'balance', _setting('balance')),
+    'features', jsonb_build_object('balance', coalesce((_setting('balance')->>'enabled')::boolean, false)),
     'promotions', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'title', title, 'description', description,
         'type', type, 'config', config, 'starts_on', starts_on, 'ends_on', ends_on) order by sort, created_at), '[]'::jsonb)
         from promotions where is_active and (ends_on is null or ends_on >= _local(now())::date)),
@@ -355,9 +382,13 @@ declare e equipment; st timestamptz := (p->>'starts_at')::timestamptz; pm int :=
   ppl int := coalesce((p->>'people')::int, 1); stud boolean := coalesce((p->>'is_student')::boolean, false);
   nm text := btrim(coalesce(p->>'name','')); ph text := _norm_phone(p->>'phone'); q jsonb; b bookings;
   tok text := encode(extensions.gen_random_bytes(24), 'hex'); cd text; cid uuid; hold int := coalesce((_setting('hold_minutes')#>>'{}')::int, 15);
-  room jsonb := _setting('room');
+  room jsonb := _setting('room'); pay_bal boolean := coalesce(p->>'pay_method','transfer') = 'balance'; acc client_accounts; has_acc boolean := false;
 begin
   perform _expire_holds();
+  -- клиент вошёл в аккаунт: бронь привязывается к нему; при оплате с баланса имя и телефон берутся из аккаунта
+  if nullif(p->>'ctoken','') is not null then acc := _client(p); has_acc := true; nm := acc.name; ph := acc.phone;
+  elsif pay_bal then raise exception 'CLIENT_AUTH_REQUIRED'; end if;
+  if pay_bal and acc.frozen then raise exception 'ACCOUNT_FROZEN'; end if;
   select * into e from equipment where id = p->>'equipment_id';
   if not found then raise exception 'EQUIPMENT_NOT_FOUND'; end if;
   if length(nm) < 2 or length(nm) > 60 then raise exception 'BAD_NAME'; end if;
@@ -370,7 +401,8 @@ begin
   q := _quote(e.id, st, pm, ppl, stud);
   if not coalesce((q->>'price_set')::boolean, false) then raise exception 'PRICE_NOT_SET'; end if;
   if (q->>'is_night')::boolean and not coalesce((p->>'age_confirmed')::boolean, false) then raise exception 'AGE_REQUIRED'; end if;
-  if (select count(*) from bookings where phone = ph and status = 'awaiting_payment') >= 3 then raise exception 'TOO_MANY_PENDING'; end if;
+  if pay_bal and acc.balance < (q->>'total')::int then raise exception 'INSUFFICIENT_FUNDS'; end if;
+  if not pay_bal and (select count(*) from bookings where phone = ph and status = 'awaiting_payment') >= 3 then raise exception 'TOO_MANY_PENDING'; end if;
   if (select count(*) from bookings where source = 'site' and created_at > now() - interval '10 minutes') >= 40 then raise exception 'RATE_LIMIT'; end if;
 
   insert into customers(phone, name, bookings_count, last_booking_at) values (ph, nm, 1, now())
@@ -382,17 +414,25 @@ begin
   end loop;
   insert into bookings(code, access_token_hash, customer_id, customer_name, phone, equipment_id, equipment_name, starts_at,
                        paid_minutes, bonus_minutes, ends_at, people, is_student, is_night, quote, total, due_now, status,
-                       payment_status, hold_until, source, comment)
+                       payment_status, hold_until, source, comment, account_id, confirmed_at)
   values (cd, _sha(tok), cid, nm, ph, e.id, e.name, st, pm, (q->>'bonus_minutes')::int, (q->>'ends_at')::timestamptz,
-          ppl, stud, (q->>'is_night')::boolean, q, (q->>'total')::int, (q->>'due_now')::int, 'awaiting_payment',
-          'unpaid', now() + make_interval(mins => hold), 'site', left(p->>'comment', 300))
+          ppl, stud, (q->>'is_night')::boolean, q, (q->>'total')::int,
+          case when pay_bal then (q->>'total')::int else (q->>'due_now')::int end,
+          case when pay_bal then 'confirmed' else 'awaiting_payment' end,
+          case when pay_bal then 'balance' else 'unpaid' end,
+          case when pay_bal then null else now() + make_interval(mins => hold) end, 'site', left(p->>'comment', 300),
+          case when has_acc then acc.id end, case when pay_bal then now() end)
   returning * into b;
   perform _occupy(b.id, null, e.id, b.starts_at, b.ends_at);
-  perform _audit('client', b.id, 'created', jsonb_build_object('total', b.total));
+  -- списание: в той же транзакции; если денег не хватит — откатится и бронь
+  if pay_bal then
+    perform _balance_move(acc.id, -b.total, 'payment', format('Оплата брони %s: %s, %s', b.code, b.equipment_name, to_char(_local(b.starts_at), 'DD.MM HH24:MI')), 'client', b.id, null);
+  end if;
+  perform _audit('client', b.id, 'created', jsonb_build_object('total', b.total, 'pay_method', case when pay_bal then 'balance' else 'transfer' end));
   perform _notify(case when b.equipment_id = 'room' then 'new_room_booking' else 'new_booking' end, b.id,
     case when b.equipment_id = 'room' then E'🌐 Новая заявка на аренду ВСЕЙ КОМНАТЫ
 ' else E'🆕 Новая заявка на бронирование
-' end || _bk_line(b));
+' end || _bk_line(b) || case when pay_bal then E'\n💰 Оплачено с личного баланса — бронь подтверждена автоматически' else '' end);
   return _booking_public(b) || jsonb_build_object('token', tok);
 end $$;
 
@@ -424,7 +464,9 @@ begin
   if m not in ('image/jpeg','image/png','image/webp','application/pdf') then raise exception 'BAD_FILE'; end if;
   if d is null or length(d) < 100 or length(d) > 7000000 then raise exception 'BAD_FILE'; end if;
   if (select count(*) from receipts where booking_id = b.id) >= 5 then raise exception 'TOO_MANY_FILES'; end if;
-  insert into receipts(booking_id, mime, data, size_bytes) values (b.id, m, d, (length(d) * 3 / 4));
+  if exists (select 1 from receipts where file_hash = encode(extensions.digest(decode(d, 'base64'), 'sha256'), 'hex'))
+     or exists (select 1 from topup_receipts where file_hash = encode(extensions.digest(decode(d, 'base64'), 'sha256'), 'hex')) then raise exception 'RECEIPT_USED'; end if;
+  insert into receipts(booking_id, mime, data, size_bytes, file_hash) values (b.id, m, d, (length(d) * 3 / 4), encode(extensions.digest(decode(d, 'base64'), 'sha256'), 'hex'));
   update bookings set status = 'receipt_sent', payment_status = 'claimed', hold_until = null, updated_at = now()
     where id = b.id returning * into b;
   perform _audit('client', b.id, 'receipt_uploaded', '{}');
@@ -450,17 +492,41 @@ begin
   return _booking_public(b);
 end $$;
 
+create or replace function _cancel_by_client(b bookings) returns bookings
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare r int := 0;
+begin
+  select * into b from bookings where id = b.id for update;   -- блокировка: повторная отмена не пройдёт
+  if b.status = 'awaiting_payment' then null;
+  elsif b.payment_status = 'balance' and b.status = 'confirmed' and b.starts_at > now() then r := _refund_amount(b);
+  else raise exception 'BAD_STATUS'; end if;
+  update bookings set status = 'cancelled', hold_until = null, updated_at = now() where id = b.id returning * into b;
+  update booking_slots set active = false where booking_id = b.id;
+  if r > 0 then perform _refund_booking(b, r, 'отмена клиентом', 'client'); select * into b from bookings where id = b.id; end if;
+  perform _audit('client', b.id, 'cancelled', jsonb_build_object('refund', r));
+  perform _notify('cancelled', b.id, E'❌ Клиент отменил бронирование\n' || _bk_line(b) || case when b.payment_status = 'balance' then format(E'\nВозврат на баланс: %s ₽', r) else '' end);
+  return b;
+end $$;
+
 create or replace function cancel_my_booking(p jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
 declare b bookings;
 begin
   b := _client_booking(p);
-  if b.status not in ('awaiting_payment') then raise exception 'BAD_STATUS'; end if;
-  update bookings set status = 'cancelled', hold_until = null, updated_at = now() where id = b.id returning * into b;
-  update booking_slots set active = false where booking_id = b.id;
-  perform _audit('client', b.id, 'cancelled', '{}');
-  perform _notify('cancelled', b.id, E'❌ Клиент отменил бронирование\n' || _bk_line(b));
+  b := _cancel_by_client(b);
   return _booking_public(b);
+end $$;
+
+create or replace function client_cancel_booking(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts; b bookings;
+begin
+  a := _client(p);
+  select * into b from bookings where code = upper(p->>'code') and account_id = a.id;
+  if not found then raise exception 'BOOKING_NOT_FOUND'; end if;
+  b := _cancel_by_client(b);
+  select * into a from client_accounts where id = a.id;
+  return _client_public(a);
 end $$;
 
 -- =====================================================================
@@ -558,7 +624,8 @@ begin
         'revenue', (select coalesce(sum(total),0) from bookings where status='confirmed' and payment_status in ('verified','onsite') and _local(starts_at)::date = d::date),
         'count', (select count(*) from bookings where status not in ('rejected','cancelled','expired') and _local(starts_at)::date = d::date)) order by d)
         from generate_series(today - 13, today, interval '1 day') d),
-    'unseen', (select count(*) from notifications where not seen)
+    'unseen', (select count(*) from notifications where not seen),
+    'topups_pending', (select count(*) from topups where status = 'receipt_sent')
   );
 end $$;
 
@@ -634,6 +701,11 @@ begin
     update bookings set status = case when act = 'reject' then 'rejected' else 'cancelled' end, hold_until = null, updated_at = now()
       where id = b.id returning * into b;
     update booking_slots set active = false where booking_id = b.id;
+    if b.payment_status = 'balance' then
+      perform _refund_booking(b, (select -coalesce(sum(amount),0) from balance_ops where booking_id = b.id and kind = 'payment')::int,
+        case when act='reject' then 'отклонено администратором' else 'отменено администратором' end, 'admin');
+      select * into b from bookings where id = b.id;
+    end if;
     perform _notify(case when act='reject' then 'rejected' else 'cancelled' end, b.id,
       format('Заявка %s %s.', b.code, case when act='reject' then 'отклонена' else 'отменена' end));
   elsif act = 'extend_hold' then
@@ -868,7 +940,7 @@ language plpgsql volatile security definer set search_path = public, extensions,
 declare k text := p->>'key'; v jsonb := p->'value';
 begin
   perform _admin(p);
-  if k not in ('timezone','hold_minutes','durations','custom_duration','booking_horizon_days','work_hours','room','student_discount_percent','night','payment','contacts','admin_idle_minutes','telegram','notify') then
+  if k not in ('timezone','hold_minutes','durations','custom_duration','booking_horizon_days','work_hours','room','student_discount_percent','night','payment','contacts','admin_idle_minutes','telegram','notify','balance') then
     raise exception 'BAD_KEY';
   end if;
   if k = 'telegram' and coalesce(v->>'bot_token','') = '' then
@@ -968,6 +1040,256 @@ begin
     'audit_log', (select coalesce(jsonb_agg(to_jsonb(x)), '[]') from (select * from audit_log order by at desc limit 5000) x));
 end $$;
 
+
+-- =====================================================================
+-- ЛИЧНЫЙ БАЛАНС: внутренние функции
+-- =====================================================================
+create or replace function _client(p jsonb) returns client_accounts
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare s client_sessions; a client_accounts;
+begin
+  select * into s from client_sessions where token_hash = _sha(p->>'ctoken');
+  if not found or s.expires_at < now() then raise exception 'CLIENT_AUTH_REQUIRED'; end if;
+  update client_sessions set last_seen = now(), expires_at = greatest(expires_at, now() + interval '30 days') where token_hash = s.token_hash;
+  select * into a from client_accounts where id = s.account_id;
+  return a;
+end $$;
+
+-- Движение денег: единственное место, где меняется баланс. Блокирует строку счёта (FOR UPDATE).
+create or replace function _balance_move(acc uuid, amt int, k text, descr text, actor text, bid uuid default null, tid uuid default null) returns int
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts; nb int;
+begin
+  select * into a from client_accounts where id = acc for update;
+  if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
+  if a.frozen and k in ('payment') then raise exception 'ACCOUNT_FROZEN'; end if;
+  nb := a.balance + amt;
+  if nb < 0 then raise exception 'INSUFFICIENT_FUNDS'; end if;
+  begin
+    insert into balance_ops(account_id, kind, amount, balance_after, booking_id, topup_id, description, actor)
+    values (acc, k, amt, nb, bid, tid, descr, actor);
+  exception when unique_violation then
+    raise exception 'ALREADY_PROCESSED';
+  end;
+  update client_accounts set balance = nb where id = acc;
+  return nb;
+end $$;
+
+create or replace function _client_public(a client_accounts) returns jsonb
+language sql stable security definer set search_path = public, extensions, pg_temp as $$
+  select jsonb_build_object('name', a.name, 'phone', a.phone, 'balance', a.balance, 'frozen', a.frozen, 'frozen_reason', a.frozen_reason,
+    'ops', (select coalesce(jsonb_agg(jsonb_build_object('at', o.created_at, 'kind', o.kind, 'amount', o.amount, 'balance_after', o.balance_after, 'description', o.description,
+              'booking_code', (select code from bookings where id = o.booking_id)) order by o.id desc), '[]'::jsonb)
+            from (select * from balance_ops where account_id = a.id order by id desc limit 200) o),
+    'topups', (select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'code', t.code, 'amount', t.amount, 'status', t.status, 'created_at', t.created_at, 'admin_note', t.admin_note,
+              'has_receipt', exists(select 1 from topup_receipts r where r.topup_id = t.id)) order by t.created_at desc), '[]'::jsonb)
+            from (select * from topups where account_id = a.id order by created_at desc limit 50) t),
+    'bookings', (select coalesce(jsonb_agg(jsonb_build_object('code', b.code, 'equipment_name', b.equipment_name, 'starts_at', b.starts_at, 'ends_at', b.ends_at,
+              'total', b.total, 'status', b.status, 'status_ru', _status_ru(b.status), 'payment_status', b.payment_status, 'refunded', b.refunded,
+              'refund_preview', case when b.payment_status = 'balance' and b.status = 'confirmed' and b.starts_at > now() then _refund_amount(b) end) order by b.starts_at desc), '[]'::jsonb)
+            from (select * from bookings where account_id = a.id order by starts_at desc limit 50) b),
+    'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'balance_settings', _setting('balance'))
+$$;
+
+-- =====================================================================
+-- ЛИЧНЫЙ БАЛАНС: функции клиента
+-- =====================================================================
+create or replace function client_register(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare ph text := _norm_phone(p->>'phone'); nm text := btrim(coalesce(p->>'name','')); pw text := coalesce(p->>'password',''); a client_accounts; tok text;
+begin
+  if ph is null then raise exception 'BAD_PHONE'; end if;
+  if length(nm) < 2 or length(nm) > 60 then raise exception 'BAD_NAME'; end if;
+  if length(pw) < 6 or length(pw) > 72 then raise exception 'PASSWORD_TOO_SHORT_CLIENT'; end if;
+  if (select count(*) from client_accounts where created_at > now() - interval '10 minutes') >= 30 then raise exception 'RATE_LIMIT'; end if;
+  if exists (select 1 from client_accounts where phone = ph) then raise exception 'PHONE_TAKEN'; end if;
+  insert into client_accounts(phone, name, password_hash, last_login_at) values (ph, nm, extensions.crypt(pw, extensions.gen_salt('bf', 10)), now()) returning * into a;
+  tok := encode(extensions.gen_random_bytes(32), 'hex');
+  insert into client_sessions(token_hash, account_id, expires_at) values (_sha(tok), a.id, now() + interval '30 days');
+  perform _audit('client', null, 'account_created', jsonb_build_object('phone', ph));
+  return _client_public(a) || jsonb_build_object('ctoken', tok);
+end $$;
+
+create or replace function client_login(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare ph text := _norm_phone(p->>'phone'); a client_accounts; tok text;
+begin
+  if ph is null then raise exception 'BAD_PHONE'; end if;
+  if (select count(*) from client_login_attempts where phone = ph and not ok and at > now() - interval '15 minutes') >= 6 then raise exception 'TOO_MANY_ATTEMPTS'; end if;
+  select * into a from client_accounts where phone = ph;
+  if not found or a.password_hash <> extensions.crypt(coalesce(p->>'password',''), a.password_hash) then
+    insert into client_login_attempts(phone, ok) values (ph, false); perform pg_sleep(0.3);
+    raise exception 'BAD_LOGIN';
+  end if;
+  insert into client_login_attempts(phone, ok) values (ph, true);
+  delete from client_sessions where account_id = a.id and expires_at < now();
+  tok := encode(extensions.gen_random_bytes(32), 'hex');
+  insert into client_sessions(token_hash, account_id, expires_at) values (_sha(tok), a.id, now() + interval '30 days');
+  update client_accounts set last_login_at = now() where id = a.id;
+  return _client_public(a) || jsonb_build_object('ctoken', tok);
+end $$;
+
+create or replace function client_logout(p jsonb) returns jsonb
+language sql volatile security definer set search_path = public, extensions, pg_temp as
+$$ delete from client_sessions where token_hash = _sha(p->>'ctoken'); select '{"ok":true}'::jsonb $$;
+
+create or replace function client_me(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts;
+begin a := _client(p); return _client_public(a); end $$;
+
+create or replace function client_topup_create(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts; amt int := (p->>'amount')::int; s jsonb := coalesce(_setting('balance'), '{}'); t topups; cd text;
+begin
+  a := _client(p);
+  if not coalesce((s->>'enabled')::boolean, true) then raise exception 'BALANCE_DISABLED'; end if;
+  if a.frozen then raise exception 'ACCOUNT_FROZEN'; end if;
+  if amt is null or amt < coalesce((s->>'min_topup')::int, 100) or amt > coalesce((s->>'max_topup')::int, 50000) then raise exception 'BAD_AMOUNT'; end if;
+  if (select count(*) from topups where account_id = a.id and status in ('awaiting_payment','receipt_sent')) >= 3 then raise exception 'TOO_MANY_PENDING'; end if;
+  loop cd := 'TP-' || _rand_code(6); exit when not exists (select 1 from topups where code = cd); end loop;
+  insert into topups(code, account_id, amount) values (cd, a.id, amt) returning * into t;
+  perform _audit('client', null, 'topup_created', jsonb_build_object('code', cd, 'amount', amt, 'phone', a.phone));
+  insert into notifications(event, message) values ('topup_new', format(E'💰 Заявка на пополнение баланса %s\nКлиент: %s, +%s\nСумма: %s ₽\nСтатус: ожидает оплаты', cd, a.name, a.phone, amt));
+  return jsonb_build_object('topup', to_jsonb(t), 'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'));
+end $$;
+
+create or replace function client_topup_receipt(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts; t topups; m text := p->>'mime'; d text := p->>'data'; h text;
+begin
+  a := _client(p);
+  select * into t from topups where id = (p->>'topup_id')::uuid and account_id = a.id for update;
+  if not found then raise exception 'NOT_FOUND'; end if;
+  if t.status not in ('awaiting_payment','receipt_sent') then raise exception 'BAD_STATUS'; end if;
+  if m not in ('image/jpeg','image/png','image/webp','application/pdf') then raise exception 'BAD_FILE'; end if;
+  if d is null or length(d) < 100 or length(d) > 7000000 then raise exception 'BAD_FILE'; end if;
+  if (select count(*) from topup_receipts where topup_id = t.id) >= 3 then raise exception 'TOO_MANY_FILES'; end if;
+  h := encode(extensions.digest(decode(d, 'base64'), 'sha256'), 'hex');
+  if exists (select 1 from topup_receipts where file_hash = h) or exists (select 1 from receipts where file_hash = h) then raise exception 'RECEIPT_USED'; end if;
+  insert into topup_receipts(topup_id, mime, data, size_bytes, file_hash) values (t.id, m, d, length(d) * 3 / 4, h);
+  update topups set status = 'receipt_sent', updated_at = now() where id = t.id returning * into t;
+  insert into notifications(event, message) values ('topup_receipt', format(E'📎 Чек по пополнению баланса %s — ожидает проверки\nКлиент: %s, +%s\nСумма: %s ₽\nПроверьте поступление денег в банке.', t.code, a.name, a.phone, t.amount));
+  return to_jsonb(t);
+end $$;
+
+create or replace function client_topup_cancel(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts; t topups;
+begin
+  a := _client(p);
+  update topups set status = 'cancelled', updated_at = now() where id = (p->>'topup_id')::uuid and account_id = a.id and status = 'awaiting_payment' returning * into t;
+  if not found then raise exception 'BAD_STATUS'; end if;
+  return to_jsonb(t);
+end $$;
+
+-- =====================================================================
+-- ЛИЧНЫЙ БАЛАНС: функции администратора
+-- =====================================================================
+create or replace function admin_topups(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+begin
+  perform _admin(p);
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'code', t.code, 'amount', t.amount, 'status', t.status, 'created_at', t.created_at, 'decided_at', t.decided_at,
+      'admin_note', t.admin_note, 'account_id', a.id, 'name', a.name, 'phone', a.phone, 'balance', a.balance, 'frozen', a.frozen,
+      'receipts', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'mime', r.mime) order by r.created_at), '[]'::jsonb) from topup_receipts r where r.topup_id = t.id))
+    order by (t.status in ('receipt_sent','awaiting_payment')) desc, t.created_at desc), '[]'::jsonb)
+    from (select * from topups where (nullif(p->>'status','') is null or status = p->>'status') order by created_at desc limit 300) t join client_accounts a on a.id = t.account_id);
+end $$;
+
+create or replace function admin_topup_receipt(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare r topup_receipts;
+begin
+  perform _admin(p);
+  select * into r from topup_receipts where id = (p->>'id')::uuid;
+  if not found then raise exception 'NOT_FOUND'; end if;
+  return jsonb_build_object('mime', r.mime, 'data', r.data);
+end $$;
+
+create or replace function admin_topup_action(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare t topups; a client_accounts; act text := p->>'action'; nb int;
+begin
+  perform _admin(p);
+  select * into t from topups where id = (p->>'id')::uuid for update;   -- блокировка: два нажатия не пройдут одновременно
+  if not found then raise exception 'NOT_FOUND'; end if;
+  if t.status not in ('awaiting_payment','receipt_sent') then raise exception 'ALREADY_PROCESSED'; end if;
+  select * into a from client_accounts where id = t.account_id;
+  if act = 'approve' then
+    if not coalesce((p->>'attest')::boolean, false) then raise exception 'ATTEST_REQUIRED'; end if;
+    nb := _balance_move(t.account_id, t.amount, 'topup', format('Пополнение %s', t.code), 'admin', null, t.id);
+    update topups set status = 'approved', decided_at = now(), updated_at = now(), admin_note = left(p->>'note', 300) where id = t.id returning * into t;
+    perform _audit('admin', null, 'topup_approved', jsonb_build_object('code', t.code, 'amount', t.amount, 'phone', a.phone, 'balance_after', nb));
+    insert into notifications(event, message, seen) values ('topup_approved', format(E'✅ Пополнение %s подтверждено: +%s ₽\nКлиент: %s, +%s\nБаланс: %s ₽', t.code, t.amount, a.name, a.phone, nb), true);
+  elsif act = 'reject' then
+    update topups set status = 'rejected', decided_at = now(), updated_at = now(), admin_note = left(p->>'note', 300) where id = t.id returning * into t;
+    perform _audit('admin', null, 'topup_rejected', jsonb_build_object('code', t.code, 'amount', t.amount, 'phone', a.phone, 'note', p->>'note'));
+  else raise exception 'BAD_ACTION'; end if;
+  return to_jsonb(t);
+end $$;
+
+create or replace function admin_accounts(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare q text := nullif(btrim(p->>'q'),'');
+begin
+  perform _admin(p);
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name, 'phone', a.phone, 'balance', a.balance, 'frozen', a.frozen, 'created_at', a.created_at,
+      'last_login_at', a.last_login_at) order by a.created_at desc), '[]'::jsonb)
+    from (select * from client_accounts where q is null or name ilike '%'||q||'%' or phone like '%'||regexp_replace(q,'\D','','g')||'%' order by created_at desc limit 300) a);
+end $$;
+
+create or replace function admin_account_get(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts;
+begin
+  perform _admin(p);
+  select * into a from client_accounts where id = (p->>'id')::uuid;
+  if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
+  return _client_public(a) || jsonb_build_object('id', a.id, 'created_at', a.created_at, 'last_login_at', a.last_login_at,
+    'ops_full', (select coalesce(jsonb_agg(jsonb_build_object('at', o.created_at, 'kind', o.kind, 'amount', o.amount, 'balance_after', o.balance_after, 'description', o.description, 'actor', o.actor) order by o.id desc), '[]'::jsonb)
+                 from balance_ops o where o.account_id = a.id));
+end $$;
+
+create or replace function admin_account_adjust(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare amt int := (p->>'amount')::int; why text := btrim(coalesce(p->>'reason','')); nb int; a client_accounts;
+begin
+  perform _admin(p);
+  if amt is null or amt = 0 or abs(amt) > 100000 then raise exception 'BAD_AMOUNT'; end if;
+  if length(why) < 3 then raise exception 'REASON_REQUIRED'; end if;
+  select * into a from client_accounts where id = (p->>'id')::uuid;
+  if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
+  nb := _balance_move(a.id, amt, 'adjust', 'Корректировка администратора: ' || why, 'admin');
+  perform _audit('admin', null, 'balance_adjusted', jsonb_build_object('phone', a.phone, 'amount', amt, 'reason', why, 'balance_after', nb));
+  return jsonb_build_object('ok', true, 'balance', nb);
+end $$;
+
+create or replace function admin_account_freeze(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts; fz boolean := coalesce((p->>'frozen')::boolean, true);
+begin
+  perform _admin(p);
+  update client_accounts set frozen = fz, frozen_reason = case when fz then left(coalesce(p->>'reason',''), 300) end where id = (p->>'id')::uuid returning * into a;
+  if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
+  if fz then delete from client_sessions where account_id = a.id; end if;
+  perform _audit('admin', null, case when fz then 'account_frozen' else 'account_unfrozen' end, jsonb_build_object('phone', a.phone, 'reason', p->>'reason'));
+  return jsonb_build_object('ok', true, 'frozen', a.frozen);
+end $$;
+
+create or replace function admin_account_password(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts; pw text := coalesce(p->>'password','');
+begin
+  perform _admin(p);
+  if length(pw) < 6 then raise exception 'PASSWORD_TOO_SHORT_CLIENT'; end if;
+  update client_accounts set password_hash = extensions.crypt(pw, extensions.gen_salt('bf', 10)) where id = (p->>'id')::uuid returning * into a;
+  if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
+  delete from client_sessions where account_id = a.id;
+  perform _audit('admin', null, 'client_password_reset', jsonb_build_object('phone', a.phone));
+  return '{"ok":true}';
+end $$;
+
 -- =====================================================================
 -- Права: внутренние функции недоступны снаружи, RPC — доступны
 -- =====================================================================
@@ -978,7 +1300,9 @@ declare f record;
     'admin_dashboard','admin_list_bookings','admin_get_booking','admin_get_receipt','admin_booking_action','admin_update_booking',
     'admin_create_booking','admin_calendar','admin_block_create','admin_block_delete','admin_equipment_list','admin_equipment_save',
     'admin_equipment_delete','admin_equipment_photo','admin_equipment_status','admin_settings_get','admin_settings_save','admin_tariff_save','admin_tariff_delete',
-    'admin_promo_save','admin_promo_delete','admin_notifications','admin_audit','admin_export'];
+    'admin_promo_save','admin_promo_delete','admin_notifications','admin_audit','admin_export',
+    'client_register','client_login','client_logout','client_me','client_topup_create','client_topup_receipt','client_topup_cancel','client_cancel_booking',
+    'admin_topups','admin_topup_receipt','admin_topup_action','admin_accounts','admin_account_get','admin_account_adjust','admin_account_freeze','admin_account_password'];
 begin
   for f in select p.oid::regprocedure as sig, p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' loop
     execute format('revoke all on function %s from public', f.sig);

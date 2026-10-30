@@ -34,7 +34,21 @@
     ID_EXISTS: 'Оборудование с таким номером уже есть — укажите другой номер.',
     HAS_FUTURE_BOOKINGS: 'У этого оборудования есть будущие брони. Сначала перенесите или отмените их, либо временно отключите оборудование.',
     NETWORK: 'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.',
-    NOT_CONFIGURED: 'Сайт ещё не подключён к базе данных.'
+    NOT_CONFIGURED: 'Сайт ещё не подключён к базе данных.',
+    INSUFFICIENT_FUNDS: 'Недостаточно средств на балансе. Пополните баланс или выберите оплату переводом.',
+    CLIENT_AUTH_REQUIRED: 'Войдите в личный кабинет, чтобы оплатить с баланса.',
+    PHONE_TAKEN: 'Аккаунт с этим номером уже есть — войдите.',
+    BAD_LOGIN: 'Неверный номер телефона или пароль.',
+    BAD_AMOUNT: 'Неверная сумма.',
+    RECEIPT_USED: 'Этот чек уже был использован. Загрузите чек именно этого перевода.',
+    ALREADY_PROCESSED: 'Операция уже обработана.',
+    ACCOUNT_FROZEN: 'Операции по балансу временно приостановлены. Свяжитесь с клубом.',
+    REASON_REQUIRED: 'Укажите причину.',
+    PASSWORD_TOO_SHORT_CLIENT: 'Пароль должен быть не короче 6 символов.',
+    BALANCE_DISABLED: 'Оплата с баланса сейчас недоступна.',
+    ACCOUNT_NOT_FOUND: 'Аккаунт не найден.',
+    NOT_FOUND: 'Не найдено.',
+    BAD_ACTION: 'Недопустимое действие.'
   };
 
   async function rpc(fn, p = {}) {
@@ -140,9 +154,10 @@
   function header(active) {
     const el = document.createElement('header'); el.className = 'site-header';
     el.innerHTML = `<div class="wrap hdr">${brand()}<nav class="nav">${NAV.map(([h, t]) => `<a href="${h}" class="${active === h ? 'on' : ''}">${t}</a>`).join('')}</nav>
+      <a class="hdr-bal hdr-cta${active === '/account' ? ' on' : ''}" href="/account" title="Мой баланс">💳 Баланс</a>
       <a class="btn btn-neon btn-sm hdr-cta" href="/#room">Забронировать</a>
       <button class="burger" aria-label="Меню" aria-expanded="false"><span></span><span></span><span></span></button></div>
-      <div class="mnav">${NAV.map(([h, t]) => `<a href="${h}">${t}</a>`).join('')}<a class="btn btn-neon" href="/#room">Забронировать</a><a href="/my">Мои брони</a></div>`;
+      <div class="mnav">${NAV.map(([h, t]) => `<a href="${h}">${t}</a>`).join('')}<a class="btn btn-neon" href="/#room">Забронировать</a><a href="/my">Мои брони</a><a href="/account">💳 Мой баланс</a></div>`;
     document.body.prepend(el);
     const b = $('.burger', el);
     b.onclick = () => { const o = el.classList.toggle('open'); b.setAttribute('aria-expanded', o); };
@@ -158,7 +173,7 @@
         <p><a href="${mapsUrl(c.address)}" target="_blank" rel="noopener">${esc(c.address)}</a></p>
         <p><a href="tel:${telHref(c.phone)}">${esc(c.phone)}</a></p>
         <p><a href="https://www.instagram.com/${esc(c.instagram)}/" target="_blank" rel="noopener">Instagram @${esc(c.instagram)}</a></p></div>
-      <div><h4>Разделы</h4>${NAV.map(([h, t]) => `<p><a href="${h}">${t}</a></p>`).join('')}<p><a href="/my">Мои брони</a></p></div>
+      <div><h4>Разделы</h4>${NAV.map(([h, t]) => `<p><a href="${h}">${t}</a></p>`).join('')}<p><a href="/my">Мои брони</a></p><p><a href="/account">Мой баланс</a></p></div>
     </div><div class="wrap ftr-bottom"><span>© ${new Date().getFullYear()} CHILL ZONE</span><span>Хасавюрт</span></div>`;
     document.body.appendChild(el);
   }

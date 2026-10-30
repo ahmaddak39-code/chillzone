@@ -171,7 +171,10 @@
       <div class="stack"><input class="inp" id="nm" placeholder="Имя" autocomplete="name" maxlength="60" value="${esc(localStorage.getItem('cz_name') || '')}">
       <input class="inp" id="ph" placeholder="+7 (___) ___-__-__" inputmode="tel" autocomplete="tel" value="${esc(localStorage.getItem('cz_phone') || '')}"></div>
       ${stud}
-      <div id="sumBox"></div>`;
+      <div id="sumBox"></div>
+      ${DATA.features && DATA.features.balance ? `<label class="lbl">Способ оплаты</label><div class="pay-choice" id="payCh">
+        <label class="${S.pay !== 'balance' ? 'on' : ''}"><input type="radio" name="pm" value="transfer" ${S.pay !== 'balance' ? 'checked' : ''}>💸 Переводом<small>Т-Банк, по номеру телефона</small></label>
+        <label class="${S.pay === 'balance' ? 'on' : ''}"><input type="radio" name="pm" value="balance" ${S.pay === 'balance' ? 'checked' : ''}>💳 С баланса<small id="balInfo">${CLIENT ? 'на балансе ' + rub(CLIENT.balance) : 'нужен вход в кабинет'}</small></label></div><div id="payNote"></div>` : ''}`;
   }
 
   function bindBooking(it) {
@@ -189,7 +192,32 @@
     const ph = $('#ph', p); ph.oninput = () => { ph.value = maskPhone(ph.value); validate(); };
     $('#nm', p).oninput = validate;
     $('#bkSubmit', p).onclick = () => submit(it);
+    const pc = $('#payCh', p);
+    if (pc) {
+      pc.onchange = e => { S.pay = e.target.value; $$('label', pc).forEach(l => l.classList.toggle('on', l.querySelector('input').checked)); payNote(); validate(); };
+      loadClient().then(() => { const bi = $('#balInfo'); if (bi) bi.textContent = CLIENT ? 'на балансе ' + rub(CLIENT.balance) : 'нужен вход в кабинет'; if (CLIENT && !$('#nm').value) $('#nm').value = CLIENT.name; payNote(); validate(); });
+    }
     renderBonusNote(it);
+  }
+  // ---------- личный баланс ----------
+  let CLIENT = null, clientLoaded = false;
+  const ctoken = () => { try { return localStorage.getItem('cz_ctoken') || ''; } catch (e) { return ''; } };
+  async function loadClient(force) {
+    if (clientLoaded && !force) return CLIENT; clientLoaded = true;
+    if (!ctoken()) return CLIENT = null;
+    try { CLIENT = await rpc('client_me', { ctoken: ctoken() }); } catch (e) { CLIENT = null; if (e.code === 'CLIENT_AUTH_REQUIRED') try { localStorage.removeItem('cz_ctoken'); } catch (x) {} }
+    return CLIENT;
+  }
+  function payNote() {
+    const n = $('#payNote'); if (!n) return;
+    if (S.pay !== 'balance') return n.innerHTML = '';
+    const back = encodeURIComponent('/#room');
+    if (!CLIENT) return n.innerHTML = `<div class="note info">Чтобы оплатить с баланса, <a href="/account?ret=${back}"><b>войдите в личный кабинет</b></a> — это займёт минуту.</div>`;
+    if (CLIENT.frozen) return n.innerHTML = `<div class="note">Операции по балансу приостановлены. Выберите оплату переводом.</div>`;
+    const tot = S.quote ? S.quote.total : 0;
+    n.innerHTML = tot && CLIENT.balance < tot
+      ? `<div class="note">На балансе ${rub(CLIENT.balance)} — не хватает ${rub(tot - CLIENT.balance)}. <a href="/account"><b>Пополнить баланс</b></a> или выберите оплату переводом.</div>`
+      : `<div class="note info">Спишем ${tot ? rub(tot) : 'стоимость'} с баланса — бронь подтвердится сразу. Останется ${rub(CLIENT.balance - tot)}.</div>`;
   }
   function maskPhone(v) {
     let d = v.replace(/\D/g, ''); if (d.startsWith('8')) d = '7' + d.slice(1); if (d && !d.startsWith('7')) d = '7' + d; d = d.slice(0, 11);
@@ -308,7 +336,10 @@
     else if (nm.trim().length < 2) msg = 'Введите имя';
     else if (ph.length < 11) msg = 'Введите телефон';
     else if (S.night && !($('#age') || {}).checked) msg = 'Подтвердите возраст';
-    btn.disabled = !!msg; btn.textContent = msg || `Забронировать · ${rub(S.quote.total)}`;
+    else if (S.pay === 'balance' && $('#payCh') && !CLIENT) msg = 'Войдите, чтобы оплатить с баланса';
+    else if (S.pay === 'balance' && $('#payCh') && CLIENT.balance < S.quote.total) msg = 'Недостаточно средств на балансе';
+    if ($('#payCh')) payNote();
+    btn.disabled = !!msg; btn.textContent = msg || (S.pay === 'balance' && $('#payCh') ? `Оплатить с баланса · ${rub(S.quote.total)}` : `Забронировать · ${rub(S.quote.total)}`);
   }
 
   async function submit(it) {
@@ -317,13 +348,16 @@
     const name = $('#nm').value.trim(), phone = $('#ph').value;
     try {
       const b = await rpc('create_booking', { equipment_id: it.id, starts_at: S.start, paid_minutes: S.dur, people: S.people, is_student: S.student,
-        name, phone, age_confirmed: !!($('#age') && $('#age').checked) });
+        name, phone, age_confirmed: !!($('#age') && $('#age').checked),
+        ...(ctoken() ? { ctoken: ctoken() } : {}), pay_method: S.pay === 'balance' && $('#payCh') ? 'balance' : 'transfer' });
       try { localStorage.setItem('cz_name', name); localStorage.setItem('cz_phone', phone); } catch (e) {}
       CZ.saveMyBooking(b);
       location.href = `/booking?c=${encodeURIComponent(b.code)}#t=${b.token}`;
     } catch (e) {
       err.textContent = e.message; btn.disabled = false; validate();
       if (e.code === 'SLOT_TAKEN') { S.start = null; loadAvailability(); }
+      if (e.code === 'INSUFFICIENT_FUNDS') { err.innerHTML = `${esc(e.message)} <a href="/account"><b>Пополнить баланс →</b></a>`; loadClient(true).then(validate); }
+      if (e.code === 'CLIENT_AUTH_REQUIRED') { CLIENT = null; validate(); }
     }
   }
 

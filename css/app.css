@@ -430,3 +430,26 @@ select.inp option{background:#0e1435}
 .lite .hero-still img{animation:none}
 .gal picture,.room-cta picture{display:block;width:100%;height:100%}
 @media (max-width:980px){.hero-visual:has(.hero-still){height:auto;margin:0 -12px}.hero-still img{height:auto}}
+
+/* ===== Личный баланс ===== */
+.hdr-bal{font-weight:700;font-size:14px;padding:8px 12px;border-radius:12px;border:1px solid var(--line);margin-right:8px;white-space:nowrap}
+.hdr-bal:hover,.hdr-bal.on{border-color:var(--violet);background:rgba(139,92,255,.18)}
+.acc{max-width:760px;margin:0 auto}
+.acc-auth{max-width:460px;margin:0 auto;padding:26px}
+.acc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:16px}
+.bal-card{position:relative;overflow:hidden;padding:24px;border-radius:22px;border:1px solid rgba(139,92,255,.45);
+  background:radial-gradient(ellipse 70% 90% at 100% 0%,rgba(34,227,255,.22),transparent 60%),radial-gradient(ellipse 60% 80% at 0% 100%,rgba(255,63,180,.18),transparent 60%),linear-gradient(135deg,rgba(26,22,78,.95),rgba(10,12,40,.95));
+  box-shadow:0 0 30px rgba(139,92,255,.25)}
+.bal-amt{font-weight:900;font-size:clamp(40px,11vw,64px);line-height:1.05;margin:8px 0 16px;letter-spacing:-.01em;background:linear-gradient(90deg,#fff,#9fe9ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.acc-sec{margin-top:26px}
+.acc-sec h2{font-size:20px;margin:0 0 12px}
+.ops{display:flex;flex-direction:column;gap:8px}
+.op{display:flex;justify-content:space-between;gap:12px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(16,20,56,.55);margin-bottom:8px}
+.op .plus{color:#3dffb0}.op .minus{color:#ff8fb8}
+.tp-card{margin-top:14px;padding:16px;border-radius:16px;border:1px solid rgba(34,227,255,.4);background:rgba(10,30,60,.5)}
+.pay-choice{display:flex;gap:8px;margin:10px 0}
+.pay-choice label{flex:1;display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);cursor:pointer;font-weight:700;font-size:14px}
+.pay-choice label small{font-weight:500;opacity:.7;font-size:12px}
+.pay-choice input{position:absolute;opacity:0;pointer-events:none}
+.pay-choice label.on{border-color:var(--violet);background:rgba(139,92,255,.2)}
+.op b{white-space:nowrap}
