@@ -68,6 +68,9 @@
     }
     return data;
   }
+  // «2 человека», «5 человек»
+  function people(n) { const m10 = n % 10, m100 = n % 100; return n + ' ' + (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 'человека' : 'человек'); }
+  function maxPeople(it, settings) { const n = it.kind === 'room' ? ((settings && settings.room) || {}).max_people : it.max_players; return n > 0 ? n : null; }
   function mkErr(code) {
     if (/Could not find the function|schema cache/i.test(code)) { const e = new Error('Этот раздел запускается и скоро заработает. Попробуйте чуть позже или позвоните в клуб.'); e.code = 'NOT_READY'; return e; }
     const e = new Error(ERR[code] || code); e.code = code; return e;
@@ -201,5 +204,5 @@
   const KIND_ICON = { pc: '🖥️', ps: '🎮', wheel: '🏎️', vr: '🥽', tennis: '🏓', airhockey: '🏒', foosball: '⚽', tv: '📺', room: '🌐', other: '🕹️' };
 
   window.CZ = { rpc, ERR, setTz, get TZ() { return TZ; }, zoned, localDateStr, localTime, addDays, fmtDate, fmtDateStr, wdOf, fmtRange, fmtDur, rub, $, $$, esc, toast, copy,
-    fileToPayload, logoSVG, brand, header, footer, reveal, telHref, mapsUrl, routeUrl, DEFAULT_CONTACTS, saveMyBooking, myBookings, KIND_ICON, parts, pad };
+    people, maxPeople, fileToPayload, logoSVG, brand, header, footer, reveal, telHref, mapsUrl, routeUrl, DEFAULT_CONTACTS, saveMyBooking, myBookings, KIND_ICON, parts, pad };
 })();

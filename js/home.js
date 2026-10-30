@@ -128,10 +128,10 @@
     const badge = st === 'off' ? '<span class="st-badge off">Временно недоступно</span>' : st === 'busy' ? `<span class="st-badge busy">${viewWhen === 'now' ? 'Сейчас занято' : 'Занято в это время'}</span>` : `<span class="st-badge">${viewWhen === 'now' ? 'Сейчас свободно' : 'Свободно в это время'}</span>`;
     const roomS = DATA.settings.room || {};
     let body = `<div class="bk-price">${it.price_per_hour != null ? `<b>${rub(it.price_per_hour)}</b><span class="muted">/ час${it.kind === 'room' ? `, до ${roomS.base_people || 5} человек` : ''}</span>` : '<b style="font-size:20px">Цена скоро</b>'}</div>
-      ${badge}
+      ${badge}${CZ.maxPeople(it, DATA.settings) ? `<span class="ppl-max">👥 Максимум ${CZ.people(CZ.maxPeople(it, DATA.settings))}</span>` : ''}
       <p class="muted" style="margin-top:12px">${esc(it.description)}</p>
       ${it.features && it.features.length ? `<div class="bk-feat">${it.features.map(f => `<span>${esc(f)}</span>`).join('')}</div>` : ''}`;
-    if (it.kind === 'room' && roomS.extra_person_price) body += `<div class="note info">Каждый дополнительный человек сверх ${roomS.base_people} — ${rub(roomS.extra_person_price)}/час. На время брони всей комнаты все устройства закрываются для других гостей.<br>В расписании ниже показано только то время, когда свободно <b>всё</b> оборудование.</div>`;
+    if (it.kind === 'room' && roomS.extra_person_price && (roomS.max_people || 20) > (roomS.base_people || 5)) body += `<div class="note info">Каждый дополнительный человек сверх ${roomS.base_people} — ${rub(roomS.extra_person_price)}/час. На время брони всей комнаты все устройства закрываются для других гостей.<br>В расписании ниже показано только то время, когда свободно <b>всё</b> оборудование.</div>`;
     let foot = '';
     if (it.kind === 'tv') {
       body += `<div class="note info">Телевизор 75″ находится в PlayStation-зоне и бронируется вместе с PlayStation.</div>`;
@@ -161,7 +161,7 @@
     let customSel = '';
     if (cd.enabled) { let o = ''; for (let m = cd.min || 30; m <= (cd.max || 720); m += 30) o += `<option value="${m}" ${m === S.dur ? 'selected' : ''}>${CZ.fmtDur(m)}</option>`; customSel = `<select class="inp" id="durCustom" style="margin-top:8px;${durs.includes(S.dur) ? 'display:none' : ''}">${o}</select>`; }
     const roomS = s.room || {};
-    const people = it.kind === 'room' ? `<label class="lbl">Количество человек</label><div class="stepper"><button type="button" data-ppl="-1">−</button><b id="ppl">${S.people}</b><button type="button" data-ppl="1">+</button><span class="muted" style="font-size:13px">до ${roomS.base_people || 5} — в базовой цене</span></div>` : '';
+    const people = it.kind === 'room' ? `<label class="lbl">Количество человек</label><div class="stepper"><button type="button" data-ppl="-1">−</button><b id="ppl">${S.people}</b><button type="button" data-ppl="1">+</button><span class="muted" style="font-size:13px">${(roomS.max_people || 20) > (roomS.base_people || 5) ? `до ${roomS.base_people || 5} — в базовой цене` : `максимум ${CZ.people(roomS.max_people)}`}</span></div>` : '';
     const stud = +s.student_discount_percent > 0 ? `<label class="check"><input type="checkbox" id="stud" ${S.student ? 'checked' : ''}> Я студент — скидка ${s.student_discount_percent}% (покажу студенческий билет)</label>` : '';
     return `<label class="lbl">Дата</label><div class="days" id="days">${days}</div>
       <label class="lbl">Продолжительность</label><div class="segs" id="durs">${segs}</div>${customSel}
@@ -392,14 +392,14 @@
     }
     for (const e of rest) {
       html += `<article class="fun rv"><div class="ph" data-ph="${e.id}">${e.photo_url ? `<img src="${esc(e.photo_url)}"${ss(e.photo_url)} alt="${esc(e.name)}" loading="lazy">` : CZP.artHTML(e)}<span class="chip tag">${CZ.KIND_ICON[e.kind] || ''} <span data-st-for="${e.id}" class="st-badge ${statusMap[e.id] === 'free' ? '' : statusMap[e.id] || ''}">${statusMap[e.id] === 'busy' ? 'Занято' : statusMap[e.id] === 'off' ? 'Недоступно' : 'Свободно'}</span></span></div>
-        <div class="body"><h3>${esc(e.name)}</h3><p>${esc(e.description)}</p>
+        <div class="body"><h3>${esc(e.name)}</h3><p>${esc(e.description)}</p>${e.max_players ? `<span class="ppl-max sm">👥 Максимум ${CZ.people(e.max_players)}</span>` : ''}
         <div class="foot"><span class="price">${CZP.priceLabel(e)}</span><button class="btn btn-sm ${e.price_per_hour != null ? 'btn-neon' : ''}" data-pick="${e.id}">Выбрать</button></div></div></article>`;
     }
     g.innerHTML = html;
     // загруженные админом фото
     eq.filter(e => e.has_photo).forEach(async e => { const s = await CZP.photoSrc(e); const ph = $(`[data-ph="${e.id}"]`, g); if (s && ph) { const im = ph.querySelector('img,.ph-art'); if (im) im.outerHTML = `<img src="${s}" alt="${esc(e.name)}">`; } });
     const r = DATA.equipment.find(e => e.kind === 'room');
-    if (r) { $('#roomCtaPrice').textContent = r.price_per_hour != null ? rub(r.price_per_hour) : 'Цена скоро'; $('#roomCtaText').textContent = r.description + (DATA.settings.room ? ` До ${DATA.settings.room.base_people} человек в базовой цене, каждый следующий — ${rub(DATA.settings.room.extra_person_price)}/час.` : ''); }
+    if (r) { $('#roomCtaPrice').textContent = r.price_per_hour != null ? rub(r.price_per_hour) : 'Цена скоро'; const rs = DATA.settings.room; $('#roomCtaText').textContent = r.description + (rs ? ((rs.max_people || 20) > (rs.base_people || 5) ? ` До ${rs.base_people} человек в базовой цене, каждый следующий — ${rub(rs.extra_person_price)}/час.` : ` Максимум ${CZ.people(rs.max_people)}.`) : ''); }
     else $('#roomCta').remove();
     CZ.reveal();
   }

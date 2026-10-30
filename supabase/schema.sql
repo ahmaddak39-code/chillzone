@@ -328,7 +328,7 @@ insert into settings(key, value) values
  ('custom_duration', '{"enabled": false, "min": 30, "max": 720}'),
  ('booking_horizon_days', '30'),
  ('work_hours', '{"always_open": true, "days": {"1":{"open":"10:00","close":"02:00","closed":false},"2":{"open":"10:00","close":"02:00","closed":false},"3":{"open":"10:00","close":"02:00","closed":false},"4":{"open":"10:00","close":"02:00","closed":false},"5":{"open":"10:00","close":"02:00","closed":false},"6":{"open":"10:00","close":"02:00","closed":false},"7":{"open":"10:00","close":"02:00","closed":false}}}'),
- ('room', '{"base_people": 5, "extra_person_price": 400, "max_people": 20}'),
+ ('room', '{"base_people": 5, "extra_person_price": 400, "max_people": 5}'),
  ('student_discount_percent', '0'),
  ('night', '{"enabled": true, "start": "22:00", "end": "12:00", "prepay": 500, "min_age": 18, "rules": "Ночное бронирование действует с 22:00 до 12:00. Требуется предоплата. Только для гостей от 18 лет — возьмите с собой документ."}'),
  ('payment', '{"bank": "Т-Банк (бывший Тинькофф)", "phone": "8 928 060-55-50", "whatsapp": "79280605550"}'),

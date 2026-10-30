@@ -455,3 +455,6 @@ select.inp option{background:#0e1435}
 .op b{white-space:nowrap}
 .hdr .nav a{white-space:nowrap}
 @media (max-width:1180px){.hdr-bal .hb-t{display:none}.hdr-bal{padding:8px 10px}}
+
+.ppl-max{display:inline-flex;align-items:center;gap:6px;margin-left:8px;font-size:13px;font-weight:800;padding:4px 12px;border-radius:999px;background:rgba(139,92,255,.16);color:#d9ccff;border:1px solid rgba(139,92,255,.45)}
+.ppl-max.sm{margin:0 0 12px;align-self:flex-start;font-size:12px}

@@ -21,11 +21,11 @@
     const room = eq.find(e => e.kind === 'room');
     const pcs = eq.filter(e => e.kind === 'pc');
     const rows = [];
-    if (room) rows.push([`🌐 ${esc(room.name)}, до ${s.room.base_people} человек`, room.price_per_hour != null ? rub(room.price_per_hour) + ' / час' : null]);
-    if (room && s.room.extra_person_price) rows.push(['👥 Дополнительный человек', rub(s.room.extra_person_price) + ' / час']);
+    if (room) rows.push([`🌐 ${esc(room.name)}, ${(s.room.max_people || 20) > s.room.base_people ? 'до ' + CZ.people(s.room.base_people) : 'максимум ' + CZ.people(s.room.max_people)}`, room.price_per_hour != null ? rub(room.price_per_hour) + ' / час' : null]);
+    if (room && s.room.extra_person_price && (s.room.max_people || 20) > s.room.base_people) rows.push(['👥 Дополнительный человек', rub(s.room.extra_person_price) + ' / час']);
     const pp = [...new Set(pcs.map(p => p.price_per_hour))];
     if (pcs.length) rows.push([`🖥️ Игровой компьютер (${pcs.map(p => esc(p.name)).join(', ')})`, pp.length === 1 && pp[0] != null ? rub(pp[0]) + ' / час' : pp.some(x => x != null) ? 'от ' + rub(Math.min(...pp.filter(x => x != null))) + ' / час' : null]);
-    eq.filter(e => !['room', 'pc'].includes(e.kind)).forEach(e => rows.push([`${CZ.KIND_ICON[e.kind] || ''} ${esc(e.name)}`, e.price_per_hour != null ? rub(e.price_per_hour) + ' / час' : null]));
+    eq.filter(e => !['room', 'pc'].includes(e.kind)).forEach(e => rows.push([`${CZ.KIND_ICON[e.kind] || ''} ${esc(e.name)}${e.max_players > 1 ? ' · максимум ' + CZ.people(e.max_players) : ''}`, e.price_per_hour != null ? rub(e.price_per_hour) + ' / час' : null]));
     const tariffs = (D.tariffs || []).map(t => {
       const when = [t.days && t.days.length ? t.days.map(d => DAYS[d]).join(', ') : '', t.dates && t.dates.length ? t.dates.map(CZ.fmtDateStr).join(', ') : '', t.time_from && t.time_to ? `${t.time_from.slice(0, 5)}–${t.time_to.slice(0, 5)}` : ''].filter(Boolean).join(' · ');
       const what = t.applies_to === 'all' ? 'всё оборудование' : t.applies_to.startsWith('kind:') ? ({ pc: 'компьютеры', ps: 'PlayStation', room: 'вся комната' }[t.applies_to.slice(5)] || t.applies_to.slice(5)) : (D.equipment.find(e => 'id:' + e.id === t.applies_to) || {}).name || '';
