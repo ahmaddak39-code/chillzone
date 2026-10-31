@@ -114,15 +114,21 @@
         ${(ME.bookings || []).length ? ME.bookings.map(b => `<div class="op"><div><b>${esc(b.equipment_name)}</b> <span class="dim" style="font-size:12px">${esc(b.code)}</span>
           <div class="dim" style="font-size:13px">${CZ.fmtRange(b.starts_at, b.ends_at)} · ${rub(b.total)} · ${b.payment_status === 'balance' ? 'оплачено с баланса' : b.payment_status === 'balance_pending' ? 'с баланса после подтверждения' : 'перевод'}</div>
           <div style="font-size:13px"><b class="${b.status === 'confirmed' ? 'plus' : ['rejected', 'cancelled', 'expired'].includes(b.status) ? 'minus' : ''}">${b.status === 'confirmed' ? 'Бронирование подтверждено' : b.status === 'rejected' ? 'Заявка отклонена' : esc(b.status_ru)}</b>${b.refunded ? ` · возвращено ${rub(b.refunded)}` : ''}</div></div>
-          <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">${['awaiting_payment', 'pending_review', 'receipt_sent', 'payment_verified'].includes(b.status) ? `<a class="btn btn-sm btn-wa" target="_blank" rel="noopener" href="${waLink(bookingWa(b))}">WhatsApp</a>` : ''}${b.can_cancel ? `<button class="btn btn-sm btn-ghost" data-cancel="${esc(b.code)}">Отменить</button>` : ''}</div></div>`).join('')
+          <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">${['awaiting_payment', 'pending_review', 'receipt_sent', 'payment_verified'].includes(b.status) ? `<a class="btn btn-sm btn-wa" target="_blank" rel="noopener" href="${waLink(bookingWa(b))}">WhatsApp</a>` : ''}${b.can_cancel ? `<button class="btn btn-sm btn-ghost" data-cancel="${esc(b.code)}" data-bal="${b.payment_status === 'balance' ? 1 : 0}" data-paid="${['claimed', 'verified'].includes(b.payment_status) ? 1 : 0}">Отменить бронирование</button>` : ''}</div></div>`).join('')
         : '<p class="muted">Броней, оформленных из аккаунта, пока нет.</p>'}
-        <p class="dim" style="font-size:12px;margin-top:10px">Оплаченная и подтверждённая бронь не отменяется, деньги за неё не возвращаются. Вопросы — <a href="tel:+79285535252">+7 928 553-52-52</a>.</p>
+        <p class="dim" style="font-size:12px;margin-top:10px">Бронь можно отменить в любое время до её начала. Если она оплачена с баланса, деньги полностью вернутся на баланс. После начала брони отмена недоступна. Вопросы — <a href="tel:+79285535252">+7 928 553-52-52</a>.</p>
       </section>`;
     $('#out').onclick = async () => { try { await call('client_logout'); } catch (e) {} setToken(''); authView(); };
     bindTopup(); bindPending();
     $$('[data-cancel]').forEach(b => b.onclick = async () => {
-      if (!confirm(`Отменить заявку ${b.dataset.cancel}? Деньги с баланса по ней не списывались.`)) return;
-      try { ME = await call('client_cancel_booking', { code: b.dataset.cancel }); toast('Заявка отменена, время освобождено', 'ok'); render(); } catch (e) { toast(e.message, 'err'); }
+      const bal = b.dataset.bal === '1', paid = b.dataset.paid === '1';
+      if (!confirm(bal ? 'Вы действительно хотите отменить бронирование? Средства будут возвращены на ваш баланс.'
+        : paid ? 'Вы действительно хотите отменить бронирование? Бронь оплачена переводом — по возврату с вами свяжется администратор.'
+        : 'Вы действительно хотите отменить бронирование?')) return;
+      b.disabled = true;
+      try { ME = await call('client_cancel_booking', { code: b.dataset.cancel });
+        toast(bal ? 'Бронирование отменено. Средства возвращены на ваш баланс' : paid ? 'Бронирование отменено. Администратор свяжется с вами по возврату перевода' : 'Бронирование отменено, время освобождено', 'ok'); render();
+      } catch (e) { b.disabled = false; toast(e.message, 'err'); render(); }
     });
   }
 

@@ -64,14 +64,10 @@ language sql stable security definer set search_path = public, extensions, pg_te
 
 -- Сумма возврата при отмене клиентом по правилам из настроек
 create or replace function _refund_amount(b bookings) returns int
-language plpgsql stable security definer set search_path = public, extensions, pg_temp as $$
-declare s jsonb := coalesce(_setting('balance'), '{}'); full_h numeric := coalesce((s->>'refund_full_hours')::numeric, 2); late int := coalesce((s->>'refund_late_percent')::int, 0); paid int;
-begin
-  select -coalesce(sum(amount),0) into paid from balance_ops where booking_id = b.id and kind = 'payment';
-  if paid <= 0 then return 0; end if;
-  if b.starts_at - now() >= make_interval(secs => full_h * 3600) then return paid; end if;
-  return floor(paid * late / 100.0)::int;
-end $$;
+language sql stable security definer set search_path = public, extensions, pg_temp as $$
+  -- при отмене клиентом до начала брони оплата с баланса возвращается полностью
+  select case when b.payment_status = 'balance' and now() < b.starts_at
+    then greatest(0, -coalesce((select sum(amount) from balance_ops where booking_id = b.id and kind = 'payment'),0))::int else 0 end $$;
 
 -- Возврат за бронь на баланс (один раз на бронь)
 create or replace function _refund_booking(b bookings, amt int, why text, actor text) returns int
@@ -85,6 +81,12 @@ begin
 end $$;
 
 
+
+create or replace function _age_required(st timestamptz) returns boolean language sql stable security definer set search_path = public, extensions, pg_temp as $$
+  select _local(st)::time >= time '22:00' or _local(st)::time < time '07:00' $$;
+
+create or replace function _can_client_cancel(b bookings) returns boolean language sql stable security definer set search_path = public, extensions, pg_temp as $$
+  select b.status in ('awaiting_payment','receipt_sent','pending_review','payment_verified','confirmed') and now() < b.starts_at $$;
 
 -- Уведомление: всегда в админ-панели; в Telegram — только если интеграция включена и pg_net подключён.
 -- Отправка в WhatsApp через CallMeBot (бесплатный бот, сообщения приходят на номер владельца)
@@ -352,7 +354,7 @@ language sql stable security definer set search_path = public, extensions, pg_te
     'has_receipt', exists(select 1 from receipts r where r.booking_id = b.id),
     'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'refunded', b.refunded,
     'refund_preview', null::int, 'phone', b.phone,
-    'can_cancel', b.status = 'awaiting_payment' or (b.payment_status = 'balance_pending' and b.status = 'pending_review'))
+    'can_cancel', _can_client_cancel(b))
 $$;
 
 -- =====================================================================
@@ -566,19 +568,27 @@ begin
   return _booking_public(b);
 end $$;
 
+-- Отмена клиентом: в любое время ДО начала брони. Оплата с баланса возвращается на баланс полностью и один раз.
 create or replace function _cancel_by_client(b bookings) returns bookings
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
-declare r int := 0;
+declare r int := 0; paid int := 0; other_paid boolean;
 begin
-  select * into b from bookings where id = b.id for update;   -- блокировка: повторная отмена не пройдёт
-  if b.status = 'awaiting_payment' or (b.payment_status = 'balance_pending' and b.status = 'pending_review') then null;
-  -- подтверждённую бронь клиент отменить не может (без возврата) — только администратор
-  else raise exception 'BAD_STATUS'; end if;
+  select * into b from bookings where id = b.id for update;   -- блокировка: повторная/параллельная отмена ждёт и получит BAD_STATUS
+  if b.status in ('cancelled','expired','rejected') then raise exception 'BAD_STATUS'; end if;
+  if now() >= b.starts_at then raise exception 'BOOKING_STARTED'; end if;
+  if not _can_client_cancel(b) then raise exception 'BAD_STATUS'; end if;
+  other_paid := b.payment_status in ('claimed','verified') and b.status in ('receipt_sent','payment_verified','confirmed');
   update bookings set status = 'cancelled', hold_until = null, updated_at = now() where id = b.id returning * into b;
-  update booking_slots set active = false where booking_id = b.id;
-  if r > 0 then perform _refund_booking(b, r, 'отмена клиентом', 'client'); select * into b from bookings where id = b.id; end if;
-  perform _audit('client', b.id, 'cancelled', jsonb_build_object('refund', r));
-  perform _notify('cancelled', b.id, E'❌ Клиент отменил бронирование\n' || _bk_line(b) || case when b.payment_status = 'balance' then format(E'\nВозврат на баланс: %s ₽', r) else '' end);
+  update booking_slots set active = false where booking_id = b.id;   -- время сразу освобождается
+  if b.payment_status = 'balance' then
+    select -coalesce(sum(amount),0) into paid from balance_ops where booking_id = b.id and kind = 'payment';
+    if paid > 0 then r := _refund_booking(b, paid, 'отмена клиентом до начала', 'client'); select * into b from bookings where id = b.id; end if;
+  end if;
+  perform _audit('client', b.id, 'cancelled', jsonb_build_object('refund', r, 'payment_status', b.payment_status));
+  perform _notify('cancelled', b.id, E'❌ Клиент отменил бронирование\n' || _bk_line(b)
+    || case when r > 0 then format(E'\nВозврат на баланс: %s ₽', r)
+            when other_paid then E'\n⚠️ Бронь была оплачена переводом — возврат нужно оформить вручную'
+            else '' end);
   return b;
 end $$;
 
@@ -1191,7 +1201,7 @@ language sql stable security definer set search_path = public, extensions, pg_te
             from (select * from topups where account_id = a.id order by created_at desc limit 50) t),
     'bookings', (select coalesce(jsonb_agg(jsonb_build_object('code', b.code, 'equipment_name', b.equipment_name, 'starts_at', b.starts_at, 'ends_at', b.ends_at,
               'total', b.total, 'status', b.status, 'status_ru', _status_ru(b.status), 'payment_status', b.payment_status, 'refunded', b.refunded,
-              'can_cancel', b.status = 'awaiting_payment' or (b.payment_status = 'balance_pending' and b.status = 'pending_review'),
+              'can_cancel', _can_client_cancel(b), 'started', now() >= b.starts_at,
               'refund_preview', null::int) order by b.starts_at desc), '[]'::jsonb)
             from (select * from bookings where account_id = a.id order by starts_at desc limit 50) b),
     'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'balance_settings', _setting('balance'), 'bonus_settings', _setting('bonus'))

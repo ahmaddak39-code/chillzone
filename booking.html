@@ -109,8 +109,9 @@
       </div>`;
     }
     if (open && s !== 'confirmed') html += `<div class="note info" style="margin-top:20px">Бронирование становится окончательным только после подтверждения администратором${isBal() ? '. Деньги с баланса списываются в момент подтверждения' : ' и проверки поступления денег'}.</div>`;
-    if (B.can_cancel ?? s === 'awaiting_payment') html += `<p style="margin-top:16px"><button class="btn btn-ghost btn-sm" id="cancel">Отменить заявку</button></p>`;
-    if (s === 'confirmed') html += `<p class="dim" style="font-size:13px;margin-top:6px">Бронь оплачена и подтверждена — отменить её нельзя, оплата не возвращается.</p>`;
+    if (B.can_cancel ?? s === 'awaiting_payment') html += `<p style="margin-top:16px"><button class="btn btn-ghost btn-sm" id="cancel">Отменить бронирование</button></p><p class="dim" style="font-size:13px;margin-top:6px">Отменить можно в любое время до начала брони${B.payment_status === 'balance' ? ' — деньги вернутся на ваш баланс' : ''}.</p>`;
+    else if (s === 'confirmed') html += `<p class="dim" style="font-size:13px;margin-top:6px">Бронь уже началась — отмена недоступна.</p>`;
+    if (s === 'cancelled' && B.refunded) html += `<div class="note info" style="margin-top:14px">✅ Бронирование отменено. ${rub(B.refunded)} возвращено на ваш баланс.</div>`;
     if (s === 'cancelled') html += `<p style="margin-top:14px"><a class="btn btn-sm btn-wa" href="${waLink(waCancel())}" target="_blank" rel="noopener">Сообщить клубу об отмене в WhatsApp</a></p>`;
     if (dead) html += `<a class="btn btn-neon" href="/#room" style="margin-top:10px">Оформить новую бронь</a>`;
     html += `<p class="dim" style="margin-top:30px;font-size:13px">Сохраните эту страницу — здесь всегда актуальный статус. Все заявки есть в <a href="/account"><u>личном кабинете</u></a>. Вопросы: <a href="tel:+79285535252">+7 928 553-52-52</a></p>`;
@@ -129,7 +130,9 @@
       } catch (e) { toast(e.message, 'err'); }
     };
     const s = $('#sentWa'); if (s) s.onclick = async () => { try { B = await rpc('mark_paid', { code, token }); toast('Спасибо! Администратор проверит заявку и подтвердит её', 'ok'); render(); } catch (e) { toast(e.message, 'err'); } };
-    const x = $('#cancel'); if (x) x.onclick = async () => { if (!confirm('Отменить заявку и освободить время?')) return; try { B = await rpc('cancel_my_booking', { code, token }); render(); } catch (e) { toast(e.message, 'err'); } };
+    const x = $('#cancel'); if (x) x.onclick = async () => { const bal = B.payment_status === 'balance', paid = ['claimed', 'verified'].includes(B.payment_status);
+      if (!confirm(bal ? 'Вы действительно хотите отменить бронирование? Средства будут возвращены на ваш баланс.' : paid ? 'Вы действительно хотите отменить бронирование? Бронь оплачена переводом — по возврату с вами свяжется администратор.' : 'Вы действительно хотите отменить бронирование?')) return;
+      x.disabled = true; try { B = await rpc('cancel_my_booking', { code, token }); toast(bal ? 'Бронирование отменено. Средства возвращены на ваш баланс' : 'Бронирование отменено, время освобождено', 'ok'); render(); } catch (e) { x.disabled = false; toast(e.message, 'err'); } };
     clearInterval(tick);
     if ($('#cd')) {
       const skew = Date.now() - new Date(B.server_now).getTime();

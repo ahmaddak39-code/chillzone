@@ -233,7 +233,7 @@
     const tot = S.quote ? S.quote.total : 0;
     n.innerHTML = tot && avail() < tot
       ? `<div class="note">Доступно ${rub(avail())} — не хватает ${rub(tot - avail())}. <a href="/account"><b>Пополнить баланс</b></a> или выберите оплату переводом.</div>`
-      : `<div class="note info">${tot ? rub(tot) : 'Стоимость'} спишется с баланса <b>только после подтверждения администратором</b>. Подтверждённую бронь отменить нельзя, деньги не возвращаются.</div>`;
+      : `<div class="note info">${tot ? rub(tot) : 'Стоимость'} спишется с баланса <b>только после подтверждения администратором</b>. До начала брони её можно отменить — деньги вернутся на баланс.</div>`;
   }
   function maskPhone(v) {
     let d = v.replace(/\D/g, ''); if (d.startsWith('8')) d = '7' + d.slice(1); if (d && !d.startsWith('7')) d = '7' + d; d = d.slice(0, 11);
@@ -334,8 +334,13 @@
     requote();
   }
 
-  function renderNight() {   // почасовые брони — без ночных ограничений; 18+ только у ночного пакета
-    const box = $('#nightBox'); if (box) box.innerHTML = ''; S.night = !!S.npk;
+  // информационное предупреждение 18+ для брони, начинающейся в 22:00 или позже (не блокирует бронирование)
+  function lateStart(iso) { if (!iso) return false; const p = CZ.parts(new Date(iso)); const m = p.h * 60 + p.mi; return m >= 22 * 60 || m < 7 * 60; }
+  function renderNight() {
+    const box = $('#nightBox'); if (!box) return;
+    S.night = !!S.npk;
+    box.innerHTML = !S.npk && lateStart(S.start)
+      ? `<div class="note" style="margin:12px 0 0">🔞 Внимание! Бронирование с 22:00 предназначено для клиентов 18+. Пожалуйста, учитывайте это при оформлении бронирования.</div>` : '';
   }
 
   function requote() {
