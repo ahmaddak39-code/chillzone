@@ -16,50 +16,55 @@
   button:disabled{opacity:.6;cursor:default}
   .bar{height:10px;background:#23233a;border-radius:6px;overflow:hidden;margin:18px 0 8px;display:none}
   .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#7c4dff,#00d2ff);transition:width .2s}
-  #st{font-size:14px;color:var(--mut);min-height:22px}
-  #st.ok{color:var(--ok)} #st.err{color:var(--err)}
+  .st{font-size:14px;color:var(--mut);min-height:22px}
+  .st.ok{color:var(--ok)} .st.err{color:var(--err)}
+  .vid{margin-top:18px;padding-top:18px;border-top:1px solid #23233a}
+  .vid b{display:block;font-size:16px}.vid small{display:block;color:var(--mut);font-size:13px;margin:4px 0 12px}
   .info{margin-top:18px;font-size:13px;color:var(--mut);border-top:1px solid #23233a;padding-top:14px}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>CHILL ZONE — ролик для кинотеатра</h1>
-  <p>CHILL_ZONE_CINEMA_4K.mp4 · 3840×2160 · 24 fps · 42 сек · 308 МБ</p>
-  <button id="go">⬇ Скачать видео 4K</button>
-  <div class="bar" id="bar"><i id="fill"></i></div>
-  <div id="st"></div>
+  <h1>CHILL ZONE — видео 4K</h1>
+  <p>3840×2160 · 24 fps · для кинотеатра</p>
+  <div class="vid"><b>😂 Промо с юмором и голосом</b><small>CHILL_ZONE_PROMO_4K.mp4 · 46 сек · 153 МБ</small>
+  <button data-v="promo">⬇ Скачать промо 4K</button><div class="bar"><i></i></div><div class="st"></div></div>
+  <div class="vid"><b>🎬 Кинематографичный ролик</b><small>CHILL_ZONE_CINEMA_4K.mp4 · 42 сек · 308 МБ</small>
+  <button data-v="cinema">⬇ Скачать ролик 4K</button><div class="bar"><i></i></div><div class="st"></div></div>
   <div class="info">В Telegram отправляйте через «Файл» (скрепка → Файл), а не как видео, иначе Telegram сожмёт качество.</div>
 </div>
 <script>
 const BASE='https://raw.githubusercontent.com/ahmaddak39-code/chillzone/video/';
-const PARTS=['cz4k.part0','cz4k.part1','cz4k.part2','cz4k.part3'];
-const TOTAL=307854267, SHA='5a9421908dd6ad80732ee206f46f010d4aa67a3e706d8363dec466091c1dfc33';
-const btn=document.getElementById('go'),st=document.getElementById('st'),bar=document.getElementById('bar'),fill=document.getElementById('fill');
-let url=null;
-function save(){const a=document.createElement('a');a.href=url;a.download='CHILL_ZONE_CINEMA_4K.mp4';document.body.appendChild(a);a.click();a.remove();}
-btn.onclick=async()=>{
-  if(url){save();return;}
-  btn.disabled=true;bar.style.display='block';st.className='';
-  try{
-    const chunks=[];let got=0;
-    for(const p of PARTS){
-      const r=await fetch(BASE+p,{cache:'no-store'});
-      if(!r.ok)throw new Error('HTTP '+r.status);
-      const rd=r.body.getReader();
-      for(;;){const {done,value}=await rd.read();if(done)break;chunks.push(value);got+=value.length;
-        fill.style.width=(got/TOTAL*100).toFixed(1)+'%';st.textContent='Загрузка: '+(got/1e6).toFixed(0)+' из 308 МБ';}
-    }
-    if(got!==TOTAL)throw new Error('размер не совпал');
-    const blob=new Blob(chunks,{type:'video/mp4'});
-    st.textContent='Проверяю файл…';
-    try{const h=await crypto.subtle.digest('SHA-256',await blob.arrayBuffer());
+const V={
+  cinema:{name:'CHILL_ZONE_CINEMA_4K.mp4',parts:['cz4k.part0','cz4k.part1','cz4k.part2','cz4k.part3'],total:307854267,sha:'5a9421908dd6ad80732ee206f46f010d4aa67a3e706d8363dec466091c1dfc33'},
+  promo:{name:'CHILL_ZONE_PROMO_4K.mp4',parts:['promo4k.part0','promo4k.part1'],total:152739839,sha:'7a4c8dac49ab6d69eaf1c8b3129736d50dca74d34b2f806f81e907210e985ba8'}};
+const urls={};
+function save(url,name){const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();}
+document.querySelectorAll('button[data-v]').forEach(btn=>{
+  const box=btn.parentElement, st=box.querySelector('.st'), bar=box.querySelector('.bar'), fill=bar.querySelector('i'), v=V[btn.dataset.v];
+  btn.onclick=async()=>{
+    if(urls[btn.dataset.v]){save(urls[btn.dataset.v],v.name);return;}
+    btn.disabled=true;bar.style.display='block';st.className='st';
+    try{
+      const chunks=[];let got=0;const mb=Math.round(v.total/1e6);
+      for(const p of v.parts){
+        const r=await fetch(BASE+p,{cache:'no-store'}); if(!r.ok)throw new Error('HTTP '+r.status);
+        const rd=r.body.getReader();
+        for(;;){const {done,value}=await rd.read();if(done)break;chunks.push(value);got+=value.length;
+          fill.style.width=(got/v.total*100).toFixed(1)+'%';st.textContent='Загрузка: '+(got/1e6).toFixed(0)+' из '+mb+' МБ';}
+      }
+      if(got!==v.total)throw new Error('размер не совпал');
+      const blob=new Blob(chunks,{type:'video/mp4'});
+      st.textContent='Проверяю файл…';
+      const h=await crypto.subtle.digest('SHA-256',await blob.arrayBuffer());
       const hex=[...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
-      if(hex!==SHA)throw new Error('файл повреждён');}catch(e){if(String(e.message).includes('повреждён'))throw e;}
-    url=URL.createObjectURL(blob);save();
-    st.className='ok';st.textContent='✓ Готово! Файл проверен и сохранён в «Загрузки». Если не сохранился — нажмите кнопку ещё раз.';
-    btn.textContent='⬇ Сохранить ещё раз';btn.disabled=false;
-  }catch(e){st.className='err';st.textContent='Ошибка: '+e.message+'. Проверьте интернет и нажмите ещё раз.';btn.disabled=false;}
-};
+      if(hex!==v.sha)throw new Error('файл повреждён');
+      urls[btn.dataset.v]=URL.createObjectURL(blob);save(urls[btn.dataset.v],v.name);
+      st.className='st ok';st.textContent='✓ Готово! Файл проверен и сохранён в «Загрузки». Если не сохранился — нажмите кнопку ещё раз.';
+      btn.textContent='⬇ Сохранить ещё раз';btn.disabled=false;
+    }catch(e){st.className='st err';st.textContent='Ошибка: '+e.message+'. Проверьте интернет и нажмите ещё раз.';btn.disabled=false;}
+  };
+});
 </script>
 </body>
 </html>
