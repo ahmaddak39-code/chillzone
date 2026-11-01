@@ -669,7 +669,7 @@ end $$;
 
 create or replace function admin_ping(p jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
-begin perform _admin(p); return jsonb_build_object('ok', true, 'unseen', (select count(*) from notifications where not seen)); end $$;
+begin perform _admin(p); return jsonb_build_object('ok', true, 'unseen', (select count(*) from notifications where not seen and account_id is null), 'resets_pending', (select count(*) from password_resets where status = 'pending' and expires_at > now())); end $$;
 
 create or replace function admin_change_password(p jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
@@ -721,7 +721,8 @@ begin
         'revenue', (select coalesce(sum(total),0) from bookings where status='confirmed' and payment_status in ('verified','onsite','balance') and _local(starts_at)::date = d::date),
         'count', (select count(*) from bookings where status not in ('rejected','cancelled','expired') and _local(starts_at)::date = d::date)) order by d)
         from generate_series(today - 13, today, interval '1 day') d),
-    'unseen', (select count(*) from notifications where not seen),
+    'unseen', (select count(*) from notifications where not seen and account_id is null),
+    'resets_pending', (select count(*) from password_resets where status = 'pending' and expires_at > now()),
     'topups_pending', (select count(*) from topups where status = 'receipt_sent')
   );
 end $$;
@@ -1131,8 +1132,8 @@ language plpgsql volatile security definer set search_path = public, extensions,
 declare res jsonb;
 begin
   perform _admin(p);
-  select coalesce(jsonb_agg(to_jsonb(n) order by n.at desc), '[]'::jsonb) into res from (select * from notifications order by at desc limit 100) n;
-  if coalesce((p->>'mark_seen')::boolean, false) then update notifications set seen = true where not seen; end if;
+  select coalesce(jsonb_agg(to_jsonb(n) order by n.at desc), '[]'::jsonb) into res from (select * from notifications where account_id is null order by at desc limit 100) n;
+  if coalesce((p->>'mark_seen')::boolean, false) then update notifications set seen = true where not seen and account_id is null; end if;
   return res;
 end $$;
 
@@ -1213,8 +1214,17 @@ language sql stable security definer set search_path = public, extensions, pg_te
               'can_cancel', _can_client_cancel(b), 'started', now() >= b.starts_at,
               'refund_preview', null::int) order by b.starts_at desc), '[]'::jsonb)
             from (select * from bookings where account_id = a.id order by starts_at desc limit 50) b),
-    'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'balance_settings', _setting('balance'), 'bonus_settings', _setting('bonus'))
+    'payment', _setting('payment') - 'whatsapp', 'notify', _setting('notify'), 'balance_settings', _setting('balance'), 'bonus_settings', _setting('bonus'),
+    'login', jsonb_build_object('phone', a.phone),   -- логин для входа — номер телефона; пароль хранится только в виде хеша
+    'notifications', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'at', n.at, 'event', n.event, 'title', n.title, 'message', n.message, 'seen', n.seen) order by n.at desc), '[]'::jsonb)
+            from (select * from notifications where account_id = a.id order by at desc limit 30) n),
+    'unread', (select count(*) from notifications where account_id = a.id and not seen))
 $$;
+
+-- уведомление клиенту (внутри личного кабинета)
+create or replace function _client_notify(acc uuid, ev text, ttl text, msg text) returns void
+language sql volatile security definer set search_path = public, extensions, pg_temp as $$
+  insert into notifications(event, account_id, title, message, channel_status, seen) values (ev, acc, ttl, msg, 'in_app', false) $$;
 
 -- =====================================================================
 -- ЛИЧНЫЙ БАЛАНС: функции клиента
@@ -1232,7 +1242,12 @@ begin
   tok := encode(extensions.gen_random_bytes(32), 'hex');
   insert into client_sessions(token_hash, account_id, expires_at) values (_sha(tok), a.id, now() + interval '30 days');
   perform _audit('client', null, 'account_created', jsonb_build_object('phone', ph));
-  return _client_public(a) || jsonb_build_object('ctoken', tok);
+  -- приветствие — только один раз, при создании аккаунта (уникальный индекс notifications_welcome_uq)
+  insert into notifications(event, account_id, title, message, channel_status, seen)
+  values ('client_welcome', a.id, 'Добро пожаловать в CHILL ZONE 🎮',
+    E'Здравствуйте! Добро пожаловать в CHILL ZONE 🎮\n\nВы успешно зарегистрировались!\n\nВаш аккаунт создан. Теперь вы можете бронировать игровую комнату, компьютеры, VR и игровой руль, а также пользоваться личным кабинетом.\n\nСпасибо, что выбрали CHILL ZONE! Желаем приятной игры!',
+    'in_app', false) on conflict do nothing;
+  return _client_public(a) || jsonb_build_object('ctoken', tok, 'just_registered', true);
 end $$;
 
 create or replace function client_login(p jsonb) returns jsonb
@@ -1263,6 +1278,107 @@ language plpgsql volatile security definer set search_path = public, extensions,
 declare a client_accounts;
 begin a := _client(p); return _client_public(a); end $$;
 
+
+create or replace function client_notifications_read(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare a client_accounts;
+begin
+  a := _client(p);
+  update notifications set seen = true where account_id = a.id and not seen
+    and (p->>'id' is null or id = (p->>'id')::bigint);
+  return jsonb_build_object('ok', true, 'unread', (select count(*) from notifications where account_id = a.id and not seen));
+end $$;
+
+-- ---------- Восстановление пароля ----------
+-- 1) клиент вводит телефон → получает код и отправляет его в WhatsApp клуба со своего номера
+create or replace function client_reset_start(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare ph text := _norm_phone(p->>'phone'); a client_accounts; sec text := encode(extensions.gen_random_bytes(24), 'hex'); cd text; r password_resets;
+begin
+  if ph is null then raise exception 'BAD_PHONE'; end if;
+  if (select count(*) from password_resets where created_at > now() - interval '10 minutes') >= 20 then raise exception 'RATE_LIMIT'; end if;
+  if (select count(*) from password_resets where phone = ph and created_at > now() - interval '1 hour') >= 3 then raise exception 'RESET_TOO_OFTEN'; end if;
+  select * into a from client_accounts where phone = ph;
+  if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
+  update password_resets set status = 'cancelled' where account_id = a.id and status in ('pending','approved');
+  cd := lpad(((('x' || encode(extensions.gen_random_bytes(4), 'hex'))::bit(32)::bigint) % 1000000)::text, 6, '0');
+  insert into password_resets(account_id, phone, code, secret_hash, expires_at)
+    values (a.id, ph, cd, _sha(sec), now() + interval '30 minutes') returning * into r;
+  perform _audit('client', null, 'password_reset_requested', jsonb_build_object('phone', ph));
+  perform _notify('password_reset', null, format(E'🔑 Запрос на восстановление пароля\nКлиент: %s, +%s\nКод: %s\nПодтвердите в админ-панели (Баланс → Восстановление пароля) ТОЛЬКО если в WhatsApp пришло сообщение с этим кодом с номера +%s.', a.name, ph, cd, ph));
+  return jsonb_build_object('rid', r.id, 'secret', sec, 'code', cd, 'phone', ph, 'status', r.status, 'expires_at', r.expires_at);
+end $$;
+
+create or replace function _reset_by_secret(p jsonb) returns password_resets
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare r password_resets;
+begin
+  select * into r from password_resets where id = nullif(p->>'rid','')::uuid for update;
+  if not found then raise exception 'RESET_NOT_FOUND'; end if;
+  -- секрет — 48 случайных hex-символов, подобрать его невозможно
+  if r.secret_hash <> _sha(coalesce(p->>'secret','')) then raise exception 'RESET_NOT_FOUND'; end if;
+  if r.status in ('pending','approved') and r.expires_at < now() then update password_resets set status = 'expired' where id = r.id returning * into r; end if;
+  return r;
+end $$;
+
+-- 2) клиент проверяет, подтвердил ли администратор
+create or replace function client_reset_status(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare r password_resets;
+begin
+  r := _reset_by_secret(p);
+  return jsonb_build_object('status', r.status, 'code', r.code, 'phone', r.phone, 'expires_at', r.expires_at);
+end $$;
+
+-- 3) после подтверждения клиент задаёт новый пароль (старые сессии закрываются)
+create or replace function client_reset_finish(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare r password_resets; pw text := coalesce(p->>'password',''); a client_accounts; tok text;
+begin
+  r := _reset_by_secret(p);
+  if r.status = 'pending' then raise exception 'RESET_NOT_APPROVED'; end if;
+  if r.status <> 'approved' then raise exception 'RESET_EXPIRED'; end if;
+  if length(pw) < 6 or length(pw) > 72 then raise exception 'PASSWORD_TOO_SHORT_CLIENT'; end if;
+  update client_accounts set password_hash = extensions.crypt(pw, extensions.gen_salt('bf', 10)) where id = r.account_id returning * into a;
+  update password_resets set status = 'used', used_at = now() where id = r.id;
+  delete from client_sessions where account_id = a.id;
+  delete from client_login_attempts where phone = a.phone and not ok;
+  tok := encode(extensions.gen_random_bytes(32), 'hex');
+  insert into client_sessions(token_hash, account_id, expires_at) values (_sha(tok), a.id, now() + interval '30 days');
+  update client_accounts set last_login_at = now() where id = a.id;
+  perform _client_notify(a.id, 'password_changed', 'Пароль изменён', 'Ваш пароль успешно изменён');
+  perform _audit('client', null, 'password_reset_done', jsonb_build_object('phone', a.phone));
+  return _client_public(a) || jsonb_build_object('ctoken', tok);
+end $$;
+
+-- администратор: список запросов и подтверждение/отклонение
+create or replace function admin_password_resets(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+begin
+  perform _admin(p);
+  update password_resets set status = 'expired' where status in ('pending','approved') and expires_at < now();
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'phone', r.phone, 'code', r.code, 'status', r.status, 'created_at', r.created_at,
+            'expires_at', r.expires_at, 'name', a.name, 'client_id', _client_id(a.client_no)) order by r.created_at desc), '[]'::jsonb)
+          from (select * from password_resets order by created_at desc limit 50) r join client_accounts a on a.id = r.account_id);
+end $$;
+
+create or replace function admin_password_reset_action(p jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = public, extensions, pg_temp as $$
+declare adm uuid; r password_resets; act text := p->>'action';
+begin
+  adm := _admin(p);
+  select * into r from password_resets where id = (p->>'id')::uuid for update;
+  if not found then raise exception 'RESET_NOT_FOUND'; end if;
+  if r.status <> 'pending' or r.expires_at < now() then raise exception 'ALREADY_PROCESSED'; end if;
+  if act = 'approve' then
+    if not coalesce((p->>'attest')::boolean, false) then raise exception 'ATTEST_REQUIRED'; end if;
+    update password_resets set status = 'approved', approved_at = now(), approved_by = adm, expires_at = now() + interval '30 minutes' where id = r.id;
+  elsif act = 'reject' then
+    update password_resets set status = 'rejected' where id = r.id;
+  else raise exception 'BAD_INPUT'; end if;
+  perform _audit('admin', null, 'password_reset_' || act, jsonb_build_object('phone', r.phone));
+  return admin_password_resets(p);
+end $$;
 
 -- ---------- Бонусная программа ----------
 create or replace function _bonus_validate(v jsonb) returns jsonb
@@ -1548,7 +1664,7 @@ declare f record;
     'admin_create_booking','admin_whatsapp_test','admin_account_topup','admin_balance_ops','admin_calendar','admin_block_create','admin_block_delete','admin_equipment_list','admin_equipment_save',
     'admin_equipment_delete','admin_equipment_photo','admin_equipment_status','admin_settings_get','admin_settings_save','admin_tariff_save','admin_tariff_delete',
     'admin_promo_save','admin_promo_delete','admin_notifications','admin_audit','admin_export',
-    'client_register','client_login','client_logout','client_me','client_topup_create','client_topup_receipt','client_topup_cancel','client_cancel_booking',
+    'client_register','client_login','client_logout','client_me','client_notifications_read','client_reset_start','client_reset_status','client_reset_finish','admin_password_resets','admin_password_reset_action','client_topup_create','client_topup_receipt','client_topup_cancel','client_cancel_booking',
     'admin_topups','admin_topup_receipt','admin_topup_action','admin_accounts','admin_account_get','admin_account_adjust','admin_account_freeze','admin_account_password'];
 begin
   for f in select p.oid::regprocedure as sig, p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' loop

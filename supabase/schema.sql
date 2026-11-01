@@ -363,15 +363,42 @@ insert into settings(key, value) values
  ('whatsapp_bot', '{"enabled": false, "phone": "79285535252", "apikey": ""}'),
  ('night_package', '{"enabled": true, "start": "00:00", "end": "07:00", "price": 5000, "min_age": 18}'),
  ('bonus', '{"enabled": true, "max_percent": 20, "tiers": [
-    {"min": 500, "max": 999, "percent": 0, "enabled": true},
-    {"min": 1000, "max": 2999, "percent": 5, "enabled": true},
-    {"min": 3000, "max": 4999, "percent": 10, "enabled": true},
-    {"min": 5000, "max": 9999, "percent": 15, "enabled": true},
-    {"min": 10000, "max": 19999, "percent": 18, "enabled": true},
+    {"min": 1000, "max": 4999, "percent": 5, "enabled": true},
+    {"min": 5000, "max": 9999, "percent": 10, "enabled": true},
+    {"min": 10000, "max": 19999, "percent": 15, "enabled": true},
     {"min": 20000, "max": null, "percent": 20, "enabled": true}]}')
 on conflict (key) do nothing;
 -- старые «ночные правила» для отдельного оборудования (предоплата 500 ₽, документы) отключены: ночь — только пакет для всей комнаты
 update settings set value = value || '{"enabled": false, "prepay": 0, "rules": ""}'::jsonb where key = 'night' and coalesce((value->>'enabled')::boolean, false);
+
+-- ---------- Уведомления клиентам (та же таблица notifications; account_id задан — уведомление для клиента) ----------
+alter table notifications add column if not exists account_id uuid references client_accounts(id) on delete cascade;
+alter table notifications add column if not exists title text;
+create index if not exists notifications_account_idx on notifications(account_id, at desc) where account_id is not null;
+create unique index if not exists notifications_welcome_uq on notifications(account_id) where event = 'client_welcome';
+
+-- ---------- Восстановление пароля клиента (подтверждение через WhatsApp с номера клиента + администратор) ----------
+create table if not exists password_resets (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references client_accounts(id) on delete cascade,
+  phone text not null,
+  code text not null,                         -- 6 цифр: клиент отправляет их в WhatsApp, админ сверяет
+  secret_hash text not null,                  -- секрет знает только браузер клиента
+  status text not null default 'pending' check (status in ('pending','approved','used','rejected','expired','cancelled')),
+  attempts int not null default 0,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  approved_at timestamptz,
+  approved_by uuid,
+  used_at timestamptz
+);
+create index if not exists password_resets_acc_idx on password_resets(account_id, created_at desc);
+do $$ begin
+  alter table password_resets enable row level security;
+  revoke all on table password_resets from public;
+  if exists (select 1 from pg_roles where rolname='anon') then revoke all on table password_resets from anon; end if;
+  if exists (select 1 from pg_roles where rolname='authenticated') then revoke all on table password_resets from authenticated; end if;
+end $$;
 
 insert into equipment(id,name,kind,description,features,price_per_hour,max_players,bookable,photo_url,map_x,map_y,map_rot,sort,link_to) values
  ('pc01','PC 01','pc','Игровой компьютер с видеокартой RTX, геймерское кресло и RGB-подсветка.','{"Видеокарта RTX","Игровое кресло","RGB-подсветка"}',150,1,true,'/img/pcs.webp',560,95,0,1,null),

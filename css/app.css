@@ -480,3 +480,20 @@ select.inp option{background:#0e1435}
 .tp-bonus .plus,.op .plus{color:#3dffb0}
 .bn-scale{margin-top:10px;font-size:14px}.bn-scale summary{cursor:pointer;font-weight:700;color:#b9e7ff}
 .bn-scale div div{display:flex;justify-content:space-between;padding:6px 2px;border-bottom:1px solid var(--line)}
+
+/* живой расчёт бонуса за пополнение (без раскрывающегося блока) */
+.bn-live{margin-top:10px;padding:12px 14px;border-radius:14px;background:rgba(123,92,255,.08);border:1px solid rgba(123,92,255,.3);font-size:15px}
+.bn-live.on{background:rgba(61,255,176,.07);border-color:rgba(61,255,176,.35)}
+.bn-title{font-weight:800;margin-bottom:6px}
+.bn-row{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+.bn-row b{text-align:right;white-space:nowrap}
+.bn-plus b{color:#3dffb0;font-size:17px}
+.bn-total{border-top:1px solid var(--line);margin-top:4px;padding-top:7px}.bn-total b{font-size:19px}
+.bn-hint{color:var(--muted,#9aa0b8);font-size:13px;margin-top:6px}
+.bn-line{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.bn-line span{font-size:12.5px;padding:4px 9px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid var(--line);white-space:nowrap}
+.bn-line b{color:#3dffb0}
+/* восстановление пароля и всплывающее уведомление */
+.reset-code{font-weight:900;font-size:clamp(34px,10vw,54px);line-height:1.1;letter-spacing:.22em;text-align:center;padding:14px 8px;margin:4px 0 14px;border-radius:16px;background:rgba(34,227,255,.08);border:1px dashed rgba(34,227,255,.5);color:#fff}
+.cz-pop{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(3,3,10,.72);backdrop-filter:blur(6px)}
+.cz-pop-card{max-width:480px;width:100%;max-height:90vh;overflow:auto;padding:24px}

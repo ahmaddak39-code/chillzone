@@ -29,6 +29,7 @@
   // ---------- маршруты ----------
   function go(path, replace) { if (location.pathname !== path) history[replace ? 'replaceState' : 'pushState']({}, '', path); route(); }
   addEventListener('popstate', route);
+  document.addEventListener('click', e => { if (e.target.closest('#kpiRst')) balTab = 'resets'; }, true);
   document.addEventListener('click', e => { const a = e.target.closest('a[data-r]'); if (a) { e.preventDefault(); go(a.getAttribute('href')); } });
   function route() {
     closeModal();
@@ -113,6 +114,7 @@
       <div class="kpis">
         <div class="kpi ${d.pending_review ? 'hot' : ''}"><small>На проверке</small><b>${d.pending_review}</b></div>
         ${d.topups_pending != null ? `<a class="kpi ${d.topups_pending ? 'hot' : ''}" href="/admin/balance" data-r><small>Пополнения на проверке</small><b>${d.topups_pending}</b></a>` : ''}
+        ${d.resets_pending ? `<a class="kpi hot" href="/admin/balance" data-r id="kpiRst"><small>🔑 Восстановление пароля</small><b>${d.resets_pending}</b></a>` : ''}
         <div class="kpi"><small>Ожидают оплаты</small><b>${d.awaiting_payment}</b></div>
         <div class="kpi"><small>Брони сегодня</small><b>${d.today_count}</b></div>
         <div class="kpi"><small>Оплаченные</small><b>${d.paid_count}</b></div>
@@ -677,14 +679,33 @@
       <div class="segs btabs" id="bTabs" style="margin:14px 0">
         <button data-t="topups" class="${balTab === 'topups' ? 'on' : ''}">📥 Заявки на пополнение</button>
         <button data-t="clients" class="${balTab === 'clients' ? 'on' : ''}">👤 Клиенты и балансы</button>
-        <button data-t="ops" class="${balTab === 'ops' ? 'on' : ''}">📜 История операций</button></div>
+        <button data-t="ops" class="${balTab === 'ops' ? 'on' : ''}">📜 История операций</button>
+        <button data-t="resets" class="${balTab === 'resets' ? 'on' : ''}">🔑 Восстановление пароля</button></div>
       <div id="bBody"><p class="muted">Загрузка…</p></div>`;
     $('#manTop').onclick = () => manualTopup(null);
     $('#bTabs').onclick = e => { const b = e.target.closest('[data-t]'); if (!b) return; balTab = b.dataset.t; balance(); };
-    try { balTab === 'topups' ? await topupsView() : balTab === 'clients' ? await clientsView() : await opsView(); }
+    try { balTab === 'topups' ? await topupsView() : balTab === 'clients' ? await clientsView() : balTab === 'resets' ? await resetsView() : await opsView(); }
     catch (e) { $('#bBody').innerHTML = e.code === 'NOT_READY' ? '<div class="empty">Раздел станет доступен после обновления базы данных.</div>' : `<div class="empty">${esc(e.message)}</div>`; }
   }
   const after = () => { if (location.pathname === '/admin/balance') balance(); };
+
+  // ---------- восстановление пароля клиента ----------
+  const RST = { pending: 'Ждёт проверки', approved: 'Подтверждено — клиент задаёт пароль', used: 'Пароль изменён', rejected: 'Отклонено', expired: 'Истекло', cancelled: 'Отменено' };
+  const RSB = { pending: 'pending_review', approved: 'confirmed', used: 'confirmed', rejected: 'rejected', expired: 'expired', cancelled: 'cancelled' };
+  async function resetsView(list) {
+    list = list || await api('admin_password_resets');
+    $('#bBody').innerHTML = `<div class="box"><div class="note info" style="margin:0 0 12px">Клиент, забывший пароль, получает на сайте 6-значный код и отправляет его в WhatsApp клуба <b>со своего номера</b>. Подтверждайте запрос, только если сообщение с этим кодом пришло <b>именно с номера клиента</b>. После подтверждения клиент сам задаёт новый пароль — администратор пароль не видит.</div>
+      <div class="bk-list">${list.length ? list.map(r => `<div class="bk-item" style="cursor:default"><div><span class="w">${esc(r.name)}</span> · ${esc(fmtPhone(r.phone))} · ID ${esc(r.client_id || '—')}</div><div class="r" style="font-family:monospace;font-size:1.2em;letter-spacing:.15em">${esc(r.code)}</div>
+        <div class="m">${CZ.fmtDate(r.created_at)}, ${CZ.localTime(r.created_at)} · <span class="sb ${RSB[r.status] || ''}">${RST[r.status] || r.status}</span></div>
+        ${r.status === 'pending' ? `<div class="m" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn btn-sm btn-neon" data-ra="approve" data-id="${r.id}">✅ Подтвердить</button><button class="btn btn-sm btn-ghost" data-ra="reject" data-id="${r.id}">Отклонить</button></div>` : ''}</div>`).join('') : '<div class="empty">Запросов на восстановление пароля нет</div>'}</div></div>`;
+    $$('[data-ra]').forEach(b => b.onclick = async () => {
+      const r = list.find(x => x.id === b.dataset.id); const ok = b.dataset.ra === 'approve';
+      if (ok && !confirm(`Сообщение с кодом ${r.code} пришло в WhatsApp с номера ${fmtPhone(r.phone)}?\n\nПодтверждайте, только если номер отправителя совпадает.`)) return;
+      if (!ok && !confirm('Отклонить запрос на восстановление пароля?')) return;
+      try { const l = await api('admin_password_reset_action', { id: r.id, action: b.dataset.ra, attest: ok }); toast(ok ? 'Подтверждено — клиент может задать новый пароль' : 'Запрос отклонён', 'ok'); resetsView(l); }
+      catch (e) { toast(e.message, 'err'); resetsView(); }
+    });
+  }
 
   async function topupsView() {
     const list = await api('admin_topups', { status: topFilter });
