@@ -577,17 +577,26 @@ begin
   if b.status in ('cancelled','expired','rejected') then raise exception 'BAD_STATUS'; end if;
   if now() >= b.starts_at then raise exception 'BOOKING_STARTED'; end if;
   if not _can_client_cancel(b) then raise exception 'BAD_STATUS'; end if;
-  other_paid := b.payment_status in ('claimed','verified') and b.status in ('receipt_sent','payment_verified','confirmed');
+  other_paid := b.payment_status = 'claimed';   -- клиент сообщил о переводе, но админ его ещё не проверил
   update bookings set status = 'cancelled', hold_until = null, updated_at = now() where id = b.id returning * into b;
   update booking_slots set active = false where booking_id = b.id;   -- время сразу освобождается
   if b.payment_status = 'balance' then
+    -- оплачено с баланса: возвращаем ровно то, что списали
     select -coalesce(sum(amount),0) into paid from balance_ops where booking_id = b.id and kind = 'payment';
-    if paid > 0 then r := _refund_booking(b, paid, 'отмена клиентом до начала', 'client'); select * into b from bookings where id = b.id; end if;
+  elsif b.payment_status in ('verified','onsite') then
+    -- оплата переводом/в клубе подтверждена администратором: возвращаем на внутренний баланс
+    paid := case when b.payment_status = 'onsite' then b.total else coalesce(nullif(b.due_now,0), b.total) end;
+  end if;
+  if paid > 0 and b.account_id is not null then
+    perform set_config('cz.op_method', case when b.payment_status = 'balance' then 'balance' else 'transfer' end, true);
+    r := _refund_booking(b, paid, case when b.payment_status = 'balance' then 'отмена клиентом до начала' else 'отмена клиентом до начала, оплата переводом' end, 'client');
+    select * into b from bookings where id = b.id;
   end if;
   perform _audit('client', b.id, 'cancelled', jsonb_build_object('refund', r, 'payment_status', b.payment_status));
   perform _notify('cancelled', b.id, E'❌ Клиент отменил бронирование\n' || _bk_line(b)
-    || case when r > 0 then format(E'\nВозврат на баланс: %s ₽', r)
-            when other_paid then E'\n⚠️ Бронь была оплачена переводом — возврат нужно оформить вручную'
+    || case when r > 0 then format(E'\nВозврат на внутренний баланс клиента: %s ₽', r)
+            when paid > 0 and b.account_id is null then E'\n⚠️ Бронь оплачена, но оформлена без личного кабинета — вернуть деньги нужно вручную'
+            when other_paid then E'\n⚠️ Клиент сообщал о переводе, но оплата не была проверена. Если деньги пришли — пополните баланс клиента вручную'
             else '' end);
   return b;
 end $$;
